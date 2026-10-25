@@ -1,0 +1,2684 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PixelVault API",
+    "version": "1.0.0",
+    "description": "Agent-first image hosting API. Upload images via API, get instant CDN URLs. Free tier: 200 MB storage, 500 uploads/month, 1 GB bandwidth/month.",
+    "contact": {
+      "email": "support@pixelvault.dev"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.pixelvault.dev",
+      "description": "Production"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key. Secret keys (pv_live_ / pv_test_) grant full access. Publishable keys (pv_pub_) are safe to embed in browser code: upload-only (POST /v1/images) and restricted to an allowlist of request Origins configured per key. Example: Bearer pv_live_xxxxxxxx"
+      },
+      "sessionAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Dashboard session token, issued by POST /v1/auth/login. Used only by endpoints a signed-in person drives from the web app (POST /v1/claim, POST /v1/uploads), never by the image API."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        }
+      },
+      "Image": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "img_a1b2c3d4e5f6"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "CDN URL. Supports on-the-fly transforms via query params: size (s|m|l|social), w, h (px, snapped to a discrete set), fit (scale-down|contain|cover|crop|pad), fmt (auto|webp|avif|jpg|png), q (auto|60|75|85), segment (foreground — AI background removal, transparent PNG), background (fill: hex, rgb()/rgba(), or a common CSS color name), gravity (auto|face|left|right|top|bottom|XxY, with fit=cover|crop), zoom (0.0-1.0, with gravity=face), blur (0-250), sharpen (0-10), rotate (90|180|270), flip (h|v|hv), brightness/contrast (multiplier, 1=no change), saturation (multiplier, 0=grayscale), tile (watermark: tile another of your project's images over the base). See the serve_image operation for the full parameter reference. Example: ?w=800&blur=30&saturation=0",
+            "example": "https://img.pixelvault.dev/proj_xyz789/a1b2c3d4e5f6.jpg"
+          },
+          "mime_type": {
+            "type": "string",
+            "example": "image/jpeg"
+          },
+          "size": {
+            "type": "integer",
+            "example": 245782
+          },
+          "width": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": "string",
+            "example": "photo.jpg"
+          },
+          "folder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_in": {
+            "type": "integer",
+            "description": "Present only on auto-expiring uploads: the requested TTL in seconds."
+          },
+          "temporary": {
+            "type": "boolean",
+            "description": "Present (true) only on auto-expiring uploads."
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/v1/auth/register": {
+      "post": {
+        "operationId": "register_account",
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Create account and get API key",
+        "description": "Creates an account with a default project and returns a live API key instantly. No browser or signup form needed. The password is optional: omit it for a passwordless (agent) account — the owner can set a password later via the reset flow to enable dashboard login.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "dev@example.com"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "description": "Optional. Omit for a passwordless account; provide (min 8 chars) to enable password login immediately.",
+                    "example": "your-secure-password"
+                  }
+                },
+                "required": [
+                  "email"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Account created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "account_id": {
+                          "type": "string",
+                          "example": "acct_abc123"
+                        },
+                        "email": {
+                          "type": "string",
+                          "example": "dev@example.com"
+                        },
+                        "email_verified": {
+                          "type": "boolean",
+                          "example": false
+                        },
+                        "password_set": {
+                          "type": "boolean",
+                          "example": false,
+                          "description": "Whether the account has an owner-chosen password. False for passwordless accounts until a password is set via the reset flow."
+                        },
+                        "plan": {
+                          "type": "string",
+                          "example": "free"
+                        },
+                        "default_project": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "example": "proj_xyz789"
+                            },
+                            "name": {
+                              "type": "string",
+                              "example": "Default"
+                            },
+                            "api_keys": {
+                              "type": "object",
+                              "properties": {
+                                "live": {
+                                  "type": "string",
+                                  "example": "pv_live_xxxxxxxxxxxxxxxx"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email already registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/device/start": {
+      "post": {
+        "operationId": "device_login_start",
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Start email-code sign-in",
+        "description": "Step 1 of a passwordless sign-in that needs no browser. Emails a 6-digit code (valid 10 minutes) to the address; creates the account first if the email is new, exactly like `register_account`. Finish with `device_login_complete`. At most one code per 60 seconds per account; disposable email domains are rejected. Needs a human (or a mailbox the caller controls) to read the code.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "dev@example.com"
+                  }
+                },
+                "required": [
+                  "email"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Code sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "sent": {
+                          "type": "boolean",
+                          "example": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or disposable email",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "A code was already sent in the last 60 seconds, or the per-IP auth limit (5/min) was hit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/device/complete": {
+      "post": {
+        "operationId": "device_login_complete",
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Exchange the emailed code for an API key",
+        "description": "Step 2 of the email-code sign-in. Validates the code (3 attempts, single use), marks the email verified, and returns a NEW secret API key for the account's default project. Each call mints an additional key (list and revoke them with `list_keys` / `revoke_key`), unless `replace_existing` is true, which deletes older live secret keys that share the same `label`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "dev@example.com"
+                  },
+                  "code": {
+                    "type": "string",
+                    "example": "123456"
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 40,
+                    "description": "Name for the new key (default \"PixelVault Desktop\"). Shown in the dashboard and in `list_keys`.",
+                    "example": "my-agent"
+                  },
+                  "replace_existing": {
+                    "type": "boolean",
+                    "description": "Delete older live secret keys with the same label after minting this one, so reconnecting does not pile up keys."
+                  }
+                },
+                "required": [
+                  "email",
+                  "code"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in. The key is shown only once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "account_id": {
+                          "type": "string",
+                          "example": "acct_abc123"
+                        },
+                        "key_id": {
+                          "type": "string",
+                          "example": "key_a1b2c3d4e5f6"
+                        },
+                        "api_key": {
+                          "type": "string",
+                          "example": "pv_live_xxxxxxxxxxxxxxxx"
+                        },
+                        "project_id": {
+                          "type": "string",
+                          "example": "proj_xyz789"
+                        },
+                        "email": {
+                          "type": "string",
+                          "example": "dev@example.com"
+                        },
+                        "email_verified": {
+                          "type": "boolean",
+                          "example": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing fields, `invalid_code`, `code_expired` or `too_many_attempts` (request a new code)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No account for this email; call `device_login_start` first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/images": {
+      "post": {
+        "operationId": "upload_image",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Upload an image",
+        "description": "Upload an image and receive a public CDN URL (JPEG, PNG, GIF, WebP, AVIF, SVG). Works WITHOUT an API key: keyless uploads are temporary (response includes `temporary: true` and `expires_in`, ~30 days) — add a Bearer key to make uploads permanent. Send multipart/form-data (a file), or, with a key, application/json `{ url }` to import from a URL (https only).",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Image file to upload"
+                  },
+                  "folder": {
+                    "type": "string",
+                    "description": "Optional folder name"
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ],
+                    "description": "'private' (secret key only) stores the image behind a signed URL and the response `url` is signed; default 'public'."
+                  },
+                  "sign_expires_in": {
+                    "type": "integer",
+                    "description": "Signature lifetime in seconds for a private upload (60–2592000, default 3600)."
+                  },
+                  "expires_in": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 2592000,
+                    "description": "Optional auto-expiry in seconds (60–2592000). The image is deleted by an hourly sweep after this time, so removal can lag the TTL by up to about two hours; the response echoes `expires_in` and `temporary: true`. Omit for a permanent image (keyed uploads)."
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Source image URL to import (https only). Requires an API key."
+                  },
+                  "folder": {
+                    "type": "string",
+                    "description": "Optional folder name"
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ],
+                    "description": "'private' stores the image behind a signed URL and the response `url` is signed; default 'public'."
+                  },
+                  "sign_expires_in": {
+                    "type": "integer",
+                    "description": "Signature lifetime in seconds for a private upload (60–2592000, default 3600)."
+                  },
+                  "expires_in": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 2592000,
+                    "description": "Optional auto-expiry in seconds (60–2592000). The image is deleted by an hourly sweep after this time, so removal can lag the TTL by up to about two hours; the response echoes `expires_in` and `temporary: true`. Omit for a permanent image."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Image uploaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Image"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Upload or storage limit reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_images",
+        "tags": [
+          "Images"
+        ],
+        "summary": "List images",
+        "description": "Get a paginated list of images in the project.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of images",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Image"
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "page": {
+                          "type": "integer"
+                        },
+                        "per_page": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/images/{id}": {
+      "get": {
+        "operationId": "get_image",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Get image details",
+        "description": "Retrieve metadata and CDN URL for a specific image.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "img_a1b2c3d4e5f6"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Image"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Image not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_image",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Delete image",
+        "description": "Permanently delete an image from storage and CDN.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "img_a1b2c3d4e5f6"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Image not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/images/batch": {
+      "post": {
+        "operationId": "batch_upload",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Batch upload into a collection",
+        "description": "Upload many images in one request, grouped into a collection (e.g. a CI run). Partial-failure tolerant: each item reports ok true/false independently. Private collections return signed URLs. The collection is upserted by (type, name), so re-running the same job is idempotent.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "collection",
+                  "images"
+                ],
+                "properties": {
+                  "collection": {
+                    "type": "object",
+                    "required": [
+                      "type"
+                    ],
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "description": "Collection kind, e.g. ci_build.",
+                        "example": "ci_build"
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Idempotency key within (project, type) — e.g. the CI run id.",
+                        "example": "gh-run-1234567890"
+                      },
+                      "visibility": {
+                        "type": "string",
+                        "enum": [
+                          "public",
+                          "private"
+                        ],
+                        "default": "public"
+                      },
+                      "expires_in": {
+                        "type": "integer",
+                        "description": "Image deletion TTL in seconds (60–2592000)."
+                      },
+                      "sign_expires_in": {
+                        "type": "integer",
+                        "description": "Signature lifetime for private URLs in seconds (60–2592000). Defaults to 7 days."
+                      },
+                      "metadata": {
+                        "type": "object",
+                        "description": "Freeform collection metadata (e.g. commit, pr_number, branch)."
+                      }
+                    }
+                  },
+                  "images": {
+                    "type": "array",
+                    "maxItems": 50,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "string",
+                          "description": "Base64-encoded image bytes."
+                        },
+                        "source_url": {
+                          "type": "string",
+                          "description": "Public URL to import instead of data."
+                        },
+                        "filename": {
+                          "type": "string",
+                          "example": "login-diff.png"
+                        },
+                        "metadata": {
+                          "type": "object",
+                          "description": "Freeform image metadata (e.g. testName)."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Batch result (per-item ok/failure)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "collection_id": {
+                          "type": "string",
+                          "example": "col_a1b2c3d4e5f6"
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "filename": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "url": {
+                                "type": "string"
+                              },
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "error": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Free-plan private-image limit reached (upgrade for unlimited private images)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "operationId": "get_usage",
+        "tags": [
+          "Account"
+        ],
+        "summary": "Get plan, limits and usage",
+        "description": "Plan, limits and current usage for the calling key's project, so an agent can check quota before uploading. Storage is the cumulative total (what the cap enforces); uploads are the current UTC month and reset at `resets_at`. Bandwidth usage is not reported (the CDN owns those counters); the bandwidth limit is. Requires a secret key.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "plan": {
+                          "type": "string",
+                          "enum": [
+                            "free",
+                            "starter",
+                            "pro"
+                          ]
+                        },
+                        "period": {
+                          "type": "string",
+                          "example": "2026-10"
+                        },
+                        "resets_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "usage": {
+                          "type": "object",
+                          "properties": {
+                            "storage_bytes": {
+                              "type": "integer",
+                              "description": "Total stored bytes."
+                            },
+                            "uploads": {
+                              "type": "integer",
+                              "description": "Uploads this month."
+                            }
+                          }
+                        },
+                        "limits": {
+                          "type": "object",
+                          "properties": {
+                            "storage_bytes": {
+                              "type": "integer",
+                              "description": "Storage cap."
+                            },
+                            "uploads_per_month": {
+                              "type": "integer",
+                              "description": "Monthly upload cap."
+                            },
+                            "bandwidth_bytes_per_month": {
+                              "type": "integer",
+                              "description": "Monthly bandwidth cap."
+                            }
+                          }
+                        },
+                        "remaining": {
+                          "type": "object",
+                          "properties": {
+                            "storage_bytes": {
+                              "type": "integer",
+                              "description": "Storage left (floored at 0)."
+                            },
+                            "uploads": {
+                              "type": "integer",
+                              "description": "Uploads left this month (floored at 0)."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Publishable keys cannot call this endpoint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/keys": {
+      "get": {
+        "operationId": "list_keys",
+        "tags": [
+          "Account"
+        ],
+        "summary": "List API keys",
+        "description": "Every key on the calling key's project. Hashes and raw keys are never returned; `current` marks the key that made this request. Requires a secret key.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "example": "key_a1b2c3d4e5f6"
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "secret",
+                              "publishable"
+                            ]
+                          },
+                          "environment": {
+                            "type": "string",
+                            "enum": [
+                              "live",
+                              "test"
+                            ]
+                          },
+                          "label": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "key_prefix": {
+                            "type": "string",
+                            "example": "pv_live_"
+                          },
+                          "allowed_origins": {
+                            "type": [
+                              "array",
+                              "null"
+                            ],
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_used_at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "current": {
+                            "type": "boolean",
+                            "description": "True for the key that authenticated this request."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Publishable keys cannot call this endpoint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "create_key",
+        "tags": [
+          "Account"
+        ],
+        "summary": "Create an API key",
+        "description": "Mint an additional secret key for the project. The raw key is returned once and cannot be retrieved again. A project can hold at most 25 keys (409 `key_limit_reached`), and creating or revoking keys is limited to 20 changes per hour per project. To rotate: create a new key, switch to it, then revoke the old one with `DELETE /v1/keys/{id}`. Requires a secret key.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "maxLength": 60,
+                    "description": "Optional name, e.g. \"ci\"."
+                  },
+                  "environment": {
+                    "type": "string",
+                    "enum": [
+                      "live",
+                      "test"
+                    ],
+                    "default": "live"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Key created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "key_a1b2c3d4e5f6"
+                        },
+                        "api_key": {
+                          "type": "string",
+                          "description": "The raw key. Shown only in this response.",
+                          "example": "pv_live_..."
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "secret"
+                          ]
+                        },
+                        "environment": {
+                          "type": "string",
+                          "enum": [
+                            "live",
+                            "test"
+                          ]
+                        },
+                        "label": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid label or environment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Publishable keys cannot call this endpoint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Key limit reached (25 per project)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/keys/{id}": {
+      "delete": {
+        "operationId": "revoke_key",
+        "tags": [
+          "Account"
+        ],
+        "summary": "Revoke an API key",
+        "description": "Permanently revoke a secret key on the project (publishable keys are managed from the dashboard and return 404). The key authenticating the request cannot revoke itself (409 `cannot_revoke_current_key`). The delete only applies while the calling key still exists, so two keys revoking each other concurrently cannot leave the project without a key; the loser gets 409 `conflict`. Limited to 20 key changes per hour per project. Requires a secret key.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "key_a1b2c3d4e5f6"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "deleted": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Publishable keys cannot call this endpoint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret key not found on this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`cannot_revoke_current_key` (the key making the request), or `conflict` (already revoked, or the calling key was revoked concurrently)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/images/{id}/sign-url": {
+      "post": {
+        "operationId": "sign_image_url",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Mint a signed (private) URL",
+        "description": "Return a time-limited signed URL for a private image. The signature binds the image (and project), so the URL can't be replayed against another image. Generates the project's signing secret on first use. Use a long expires_in (e.g. for a PR's lifetime) and re-sign on updates to avoid link rot.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "img_a1b2c3d4e5f6"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expires_in": {
+                    "type": "integer",
+                    "description": "Signature lifetime in seconds (60–2592000). Defaults to 3600 (1 hour).",
+                    "minimum": 60,
+                    "maximum": 2592000,
+                    "example": 2592000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "url": {
+                          "type": "string",
+                          "example": "https://img.pixelvault.dev/proj_x/img_y.png?token=…&expires=1765400000"
+                        },
+                        "expires": {
+                          "type": "integer",
+                          "description": "Unix timestamp (seconds) when the URL expires.",
+                          "example": 1765400000
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid expires_in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Image not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections": {
+      "get": {
+        "operationId": "list_collections",
+        "tags": [
+          "Images"
+        ],
+        "summary": "List collections",
+        "description": "List the project's collections, optionally filtered by type and/or name (name is the CI run id, generation id, etc.).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "ci_build"
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of collections"
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}": {
+      "get": {
+        "operationId": "get_collection",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Get a collection and its images",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "col_a1b2c3d4e5f6"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The collection with its images"
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/close": {
+      "post": {
+        "operationId": "close_collection",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Close a collection",
+        "description": "Mark a collection closed (e.g. on PR merge) and make its images eligible for the reap sweep now, ahead of their TTL.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "col_a1b2c3d4e5f6"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The closed collection"
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/export": {
+      "post": {
+        "operationId": "start_export",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Start a bulk export",
+        "description": "Start an asynchronous export of every image in the project into a downloadable tar archive (plus a manifest.json of id, filename, storage key, URL, and metadata per image). Your data is always portable — no lock-in. Returns a job; poll status_url until complete, then download. Auth is project-scoped: pass a secret key to export that key's project, or a dashboard token together with a project_id query parameter.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "proj_a1b2c3d4e5f6"
+            },
+            "description": "Required only when authenticating with a dashboard token; ignored for secret-key auth (the key already identifies the project)."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Export job accepted. Poll status_url until status is 'complete'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "job_id": {
+                      "type": "string",
+                      "example": "exp_a1b2c3d4e5f6"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "pending"
+                    },
+                    "image_count": {
+                      "type": "integer",
+                      "example": 128
+                    },
+                    "status_url": {
+                      "type": "string",
+                      "example": "/v1/export-jobs/exp_a1b2c3d4e5f6"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "project_id required (dashboard-token auth)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Publishable key used (secret key required)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found for this account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An export for this project is already in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/export-jobs/{id}": {
+      "get": {
+        "operationId": "get_export_job",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Get export job status",
+        "description": "Poll an export job. When status is 'complete', the response includes download_url. Auth is the same as starting an export (secret key, or dashboard token + project_id).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "exp_a1b2c3d4e5f6"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "processing",
+                      "enum": [
+                        "pending",
+                        "processing",
+                        "complete",
+                        "failed",
+                        "expired"
+                      ]
+                    },
+                    "image_count": {
+                      "type": "integer"
+                    },
+                    "processed_count": {
+                      "type": "integer"
+                    },
+                    "bytes": {
+                      "type": "integer"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "download_url": {
+                      "type": "string",
+                      "example": "/v1/export-jobs/exp_a1b2c3d4e5f6/download"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Export job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/export-jobs/{id}/download": {
+      "get": {
+        "operationId": "download_export",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Download a finished export",
+        "description": "Stream the completed export as a tar archive (application/x-tar) containing manifest.json plus every image. 409 if the job isn't complete yet; 410 if it has expired.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "exp_a1b2c3d4e5f6"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tar archive.",
+            "content": {
+              "application/x-tar": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Export job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Export not complete yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Export expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/claim": {
+      "post": {
+        "operationId": "claim_upload",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Claim an anonymous upload into your account",
+        "description": "Exchange the `claim_token` from POST /v1/playground/upload for a permanent image in your account. Authenticates with a dashboard session token (JWT), NOT an API key — this is the path a web user takes to keep an image they just made, without ever touching a key. Idempotent per project (enforced by a unique index, so concurrent claims cannot store duplicates): re-claiming returns the image already saved. Valid for 24 hours, after which the temporary upload no longer exists.",
+        "security": [
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "description": "The `claim_token` returned by POST /v1/playground/upload."
+                  }
+                },
+                "required": [
+                  "token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Already claimed — the same image, returned without storing a second copy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Image saved permanently",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "img_a1b2c3d4e5f6"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "mime_type": {
+                          "type": "string",
+                          "example": "image/png"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "example": 51234
+                        },
+                        "project_id": {
+                          "type": "string",
+                          "example": "proj_a1b2c3d4e5f6"
+                        },
+                        "already_claimed": {
+                          "type": "boolean",
+                          "example": false
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid claim token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Storage limit reached — a plan ceiling, not a rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unverified account at the pre-verification upload cap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The account has no project to save into",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The temporary upload has expired and is gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or monthly upload quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/uploads": {
+      "post": {
+        "operationId": "dashboard_upload",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Upload an image from a signed-in session",
+        "description": "Store one image for the signed-in account. Authenticates with a dashboard session token (JWT), NOT an API key — this is what the web dashboard's uploader calls, so a person who has never been issued a key can still add images. The image lands in the account's default project.\n\nDeliberately narrow: one file per request, no folder, visibility, TTL or URL import. Callers that need those should use POST /v1/images with an API key.",
+        "security": [
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The image file. Max 5 MB; type is detected from magic bytes."
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Image stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "img_a1b2c3d4e5f6"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "mime_type": {
+                          "type": "string",
+                          "example": "image/png"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "example": 51234
+                        },
+                        "filename": {
+                          "type": "string",
+                          "example": "screenshot.png"
+                        },
+                        "project_id": {
+                          "type": "string",
+                          "example": "proj_a1b2c3d4e5f6"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No file provided, or the bytes are not a supported image",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Storage limit reached — a plan ceiling, not a rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unverified account at the pre-verification upload cap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The account has no project to upload into",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File larger than 5 MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or monthly upload quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/playground/upload": {
+      "post": {
+        "operationId": "playground_upload",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Anonymous upload (no API key)",
+        "description": "Upload an image without an account or API key and get a temporary public CDN URL. Rate limited to 10 uploads/hour per IP, max 2 MB. Images are removed within 24 hours — use the authenticated upload for permanent hosting.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Image file to upload (max 2 MB)"
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Image uploaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "tmp_a1b2c3d4e5f6"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "mime_type": {
+                          "type": "string",
+                          "example": "image/png"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "example": 51234
+                        },
+                        "expires_in": {
+                          "type": "integer",
+                          "example": 86400
+                        },
+                        "claim_token": {
+                          "type": "string",
+                          "description": "Proof that this caller performed the upload. Exchange it at POST /v1/claim to keep the image permanently in a signed-in account. Valid for 24 hours and idempotent per project — redeeming it again returns the image already saved rather than storing a second copy."
+                        },
+                        "claim_expires_in": {
+                          "type": "integer",
+                          "example": 86400
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File exceeds the 2 MB playground limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_check",
+        "tags": [
+          "Health"
+        ],
+        "summary": "Health check",
+        "description": "Returns service health status.",
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/{project_id}/{filename}": {
+      "servers": [
+        {
+          "url": "https://img.pixelvault.dev",
+          "description": "Image CDN + on-the-fly transform endpoint"
+        }
+      ],
+      "get": {
+        "operationId": "serve_image",
+        "tags": [
+          "Image Delivery"
+        ],
+        "summary": "Serve or transform an image",
+        "description": "Fetch an image from the CDN — optionally transformed on the fly via query params — from img.pixelvault.dev (not the API host). No API call or auth for public images. Transforms are edge-cached; invalid params are ignored (the original is returned, never an error); SVG sources are served as-is (not transformed). `filename` is `{image_id}.{ext}` and may be preceded by a folder path (e.g. `blog/img_abc123.png`). The effect params (segment, gravity, zoom, blur, sharpen, rotate, flip, brightness, contrast, saturation) apply to your project images, not the anonymous playground. Response headers: `X-PV-Transform` echoes the applied operations; `X-PV-Cache` is HIT|MISS.",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project ID (omit on custom domains, where it is implied by the host).",
+            "schema": {
+              "type": "string"
+            },
+            "example": "proj_xyz789"
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "description": "`{image_id}.{ext}`, optionally folder-prefixed (e.g. `blog/img_abc123.png`).",
+            "schema": {
+              "type": "string"
+            },
+            "example": "img_a1b2c3d4e5f6.jpg"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Named preset (wins over w/h). s=256w, m=640w, l=1280w, social=1200×630 OG card.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "s",
+                "m",
+                "l",
+                "social"
+              ]
+            }
+          },
+          {
+            "name": "w",
+            "in": "query",
+            "description": "Target width in px, snapped up to a discrete set (16–4000).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "h",
+            "in": "query",
+            "description": "Target height in px, snapped up to a discrete set (16–4000).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "fit",
+            "in": "query",
+            "description": "Resize mode. `scale-down` (default) never enlarges a smaller source; the others fit the exact box and may upscale.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "scale-down",
+                "contain",
+                "cover",
+                "crop",
+                "pad"
+              ]
+            }
+          },
+          {
+            "name": "fmt",
+            "in": "query",
+            "description": "Output format. `auto` negotiates WebP/AVIF via the Accept header. Omit to keep the source format. `format` is accepted as an alias.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "webp",
+                "avif",
+                "jpg",
+                "png"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Output quality (discrete steps).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "60",
+                "75",
+                "85"
+              ]
+            }
+          },
+          {
+            "name": "segment",
+            "in": "query",
+            "description": "AI background removal → transparent cut-out. Forces PNG unless a solid `background` or `fmt=webp`/`avif` is set. Project images only.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "foreground"
+              ]
+            }
+          },
+          {
+            "name": "background",
+            "in": "query",
+            "description": "Fill behind a removed background (or the `fit=pad` area): hex (`%23ffaa00`), rgb()/rgba(), or a common CSS color name.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "white"
+          },
+          {
+            "name": "gravity",
+            "in": "query",
+            "description": "Crop gravity, with `fit=cover`/`crop`. `face` is face-aware. `XxY` = 0.0–1.0 coordinates.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "face"
+          },
+          {
+            "name": "zoom",
+            "in": "query",
+            "description": "Face-crop tightness, with `gravity=face`.",
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          {
+            "name": "blur",
+            "in": "query",
+            "description": "Gaussian blur (0–250, snapped to a discrete set). 0 = off.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 250
+            }
+          },
+          {
+            "name": "sharpen",
+            "in": "query",
+            "description": "Sharpen strength (0–10, snapped). 1 is a good default for downscaled images. 0 = off.",
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            }
+          },
+          {
+            "name": "rotate",
+            "in": "query",
+            "description": "Rotate in 90° steps.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                90,
+                180,
+                270
+              ]
+            }
+          },
+          {
+            "name": "flip",
+            "in": "query",
+            "description": "Mirror horizontally, vertically, or both.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "h",
+                "v",
+                "hv"
+              ]
+            }
+          },
+          {
+            "name": "brightness",
+            "in": "query",
+            "description": "Brightness multiplier, snapped to 0.5/0.75/1.25/1.5/2. 1 = no change.",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "contrast",
+            "in": "query",
+            "description": "Contrast multiplier, snapped to 0.5/0.75/1.25/1.5/2. 1 = no change.",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "saturation",
+            "in": "query",
+            "description": "Saturation multiplier, snapped to 0/0.5/1.5/2. 0 = grayscale; 1 = no change.",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "tile",
+            "in": "query",
+            "description": "Watermark: the filename of another RASTER image (png/jpg/webp/avif) in the SAME project (e.g. img_logo.png — optionally folder-prefixed), tiled edge-to-edge at its native size over the base. Bake opacity into the source PNG. Must be your own uploaded raster image — not an external URL and not SVG. A missing filename is ignored (the base is served).",
+            "schema": {
+              "type": "string"
+            },
+            "example": "img_logo.png"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "description": "HMAC signature for a signed (private) URL. When transform params are present they are bound into the signature.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expires",
+            "in": "query",
+            "description": "Unix timestamp (seconds) after which a signed URL is rejected.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image, transformed if params were supplied.",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed URL invalid or expired, or a signed transform could not be served."
+          },
+          "404": {
+            "description": "Image or project not found."
+          },
+          "410": {
+            "description": "Image expired or deleted (a placeholder image is returned)."
+          },
+          "429": {
+            "description": "Bandwidth limit exceeded on the free tier (a placeholder image is returned)."
+          }
+        }
+      }
+    }
+  }
+}
