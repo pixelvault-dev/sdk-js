@@ -79,7 +79,7 @@ export interface paths {
         put?: never;
         /**
          * Upload an image
-         * @description Upload an image and receive a public CDN URL (JPEG, PNG, GIF, WebP, AVIF, SVG). Works WITHOUT an API key: keyless uploads are temporary (response includes `temporary: true` and `expires_in`, ~30 days) — add a Bearer key to make uploads permanent. Send multipart/form-data (a file), or, with a key, application/json `{ url }` to import from a URL (https only).
+         * @description Upload an image and receive a public CDN URL (JPEG, PNG, GIF, WebP, AVIF, SVG). Works WITHOUT an API key: keyless uploads are temporary (response includes `temporary: true` and `expires_in`, ~30 days) — add a Bearer key to make uploads permanent. Send multipart/form-data (a file), or, with a key, application/json `{ url }` to import from a URL (https only). Retry-safe: send an `Idempotency-Key` header and a retry after a timeout returns the original image instead of storing a second copy; add `dedupe=true` to reuse an existing image with identical bytes. `width` and `height` are returned for every format whose header carries them.
          */
         post: operations["upload_image"];
         delete?: never;
@@ -107,6 +107,26 @@ export interface paths {
          * @description Permanently delete an image from storage and CDN.
          */
         delete: operations["delete_image"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/images/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate an image from a text prompt
+         * @description Create an image from a text prompt with a Cloudflare Workers AI model and host it in one call. Returns the same payload as an upload (permanent CDN URL, dimensions, optimized_url) plus a `generation` block. Costs credits from your monthly grant (free 10, Starter 300, Pro 1500; credits reset on the 1st, UTC): FLUX schnell and SDXL cost 1, Leonardo models cost 20. The free plan can use flux-1-schnell only. Credits are refunded if generation or storage fails. The image also counts toward your upload and storage quotas. Requires a secret key and a verified email. Requests refused for plan, quota, credit or validation reasons never run the model. Prompts that clearly ask for adult content are refused (see the Terms of Service).
+         */
+        post: operations["generate_image"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -210,6 +230,46 @@ export interface paths {
          * @description Return a time-limited signed URL for a private image. The signature binds the image (and project), so the URL can't be replayed against another image. Generates the project's signing secret on first use. Use a long expires_in (e.g. for a PR's lifetime) and re-sign on updates to avoid link rot.
          */
         post: operations["sign_image_url"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a paid-plan checkout
+         * @description Returns a Stripe Checkout URL for the chosen plan. A human completes payment on that page; the plan changes only after Stripe confirms. Live secret API key (pv_live_) or dashboard token; test and publishable keys get 403. Requires a verified email. Limited to 10 requests per hour per account.
+         */
+        post: operations["start_checkout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing/portal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open the billing portal
+         * @description Returns a Stripe customer-portal URL to change plan, update payment details or cancel. Live secret API key (pv_live_) or dashboard token; test and publishable keys get 403. Limited to 10 requests per hour per account.
+         */
+        post: operations["open_billing_portal"];
         delete?: never;
         options?: never;
         head?: never;
@@ -375,6 +435,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/uploads/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete an image from a signed-in session
+         * @description Permanently delete one of the signed-in account's images (the R2 object and its record) and free its storage. Authenticates with a dashboard session token (JWT), NOT an API key — this is what the web dashboard's Delete button calls. Callers with an API key should use DELETE /v1/images/{id}. An id that does not exist or belongs to another account returns 404.
+         */
+        delete: operations["dashboard_delete_image"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/playground/upload": {
         parameters: {
             query?: never;
@@ -454,6 +534,12 @@ export interface components {
              * @example https://img.pixelvault.dev/proj_xyz789/a1b2c3d4e5f6.jpg
              */
             url?: string;
+            /**
+             * Format: uri
+             * @description Present on keyed public uploads of raster images (not SVG/GIF/private). The same image served as WebP or AVIF (negotiated per browser) at quality 85: `url` plus `?fmt=auto&q=85`. The original at `url` is unchanged. Prefer this for embeds.
+             * @example https://img.pixelvault.dev/proj_xyz789/a1b2c3d4e5f6.jpg?fmt=auto&q=85
+             */
+            optimized_url?: string;
             /** @example image/jpeg */
             mime_type?: string;
             /** @example 245782 */
@@ -469,6 +555,10 @@ export interface components {
             expires_in?: number;
             /** @description Present (true) only on auto-expiring uploads. */
             temporary?: boolean;
+            /** @description Present (true) when `dedupe=true` matched an existing image with identical bytes and nothing new was stored or billed. */
+            deduplicated?: boolean;
+            /** @description Present (true) when an `Idempotency-Key` repeat returned the original upload's image. */
+            replayed?: boolean;
         };
     };
     responses: never;
@@ -725,7 +815,10 @@ export interface operations {
     upload_image: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Keyed uploads. A repeat with the same key and the same bytes returns the original image (200, `replayed: true`); the same key with different bytes, a different visibility, or an expired image returns 422 `idempotency_key_reuse`. A replay describes the stored image, not the retry. Keys are scoped to the project and live as long as the image. Cannot be combined with `dedupe`. */
+                "Idempotency-Key"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -748,6 +841,8 @@ export interface operations {
                     sign_expires_in?: number;
                     /** @description Optional auto-expiry in seconds (60–2592000). The image is deleted by an hourly sweep after this time, so removal can lag the TTL by up to about two hours; the response echoes `expires_in` and `temporary: true`. Omit for a permanent image (keyed uploads). */
                     expires_in?: number;
+                    /** @description Keyed uploads. When true and the project already has an image with identical bytes, the same visibility, folder and a lifetime at least as long as requested, that image is returned (200, `deduplicated: true`) and no upload is stored or counted. Best-effort: simultaneous uploads of the same bytes can each be stored. Cannot be combined with `Idempotency-Key`. Default false. */
+                    dedupe?: boolean;
                 };
                 "application/json": {
                     /**
@@ -766,10 +861,23 @@ export interface operations {
                     sign_expires_in?: number;
                     /** @description Optional auto-expiry in seconds (60–2592000). The image is deleted by an hourly sweep after this time, so removal can lag the TTL by up to about two hours; the response echoes `expires_in` and `temporary: true`. Omit for a permanent image. */
                     expires_in?: number;
+                    /** @description When true and the project already has an image with identical bytes, the same visibility, folder and a lifetime at least as long as requested, that image is returned (200, `deduplicated: true`) and nothing is stored or counted. Default false. */
+                    dedupe?: boolean;
                 };
             };
         };
         responses: {
+            /** @description Nothing new was stored: an `Idempotency-Key` replay or a `dedupe` match. The image carries `replayed` or `deduplicated`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Image"];
+                    };
+                };
+            };
             /** @description Image uploaded */
             201: {
                 headers: {
@@ -792,6 +900,15 @@ export interface operations {
             };
             /** @description Invalid or missing API key */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `idempotency_key_reuse`: the Idempotency-Key was already used with different image content. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -886,6 +1003,159 @@ export interface operations {
             };
             /** @description Image not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    generate_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description What to draw.
+                     * @example A minimalist hero image of a mountain at sunrise, flat illustration
+                     */
+                    prompt: string;
+                    /**
+                     * @description Model id. Credits per image: flux-1-schnell 1, sdxl-lightning 1, sdxl-base 1, lucid-origin 20, phoenix-1.0 20. The SDXL models are in beta.
+                     * @default flux-1-schnell
+                     * @enum {string}
+                     */
+                    model?: "flux-1-schnell" | "sdxl-lightning" | "sdxl-base" | "lucid-origin" | "phoenix-1.0";
+                    /** @description Optional folder (letters, numbers, hyphens, underscores; max 64 chars). */
+                    folder?: string;
+                    /**
+                     * @default public
+                     * @enum {string}
+                     */
+                    visibility?: "public" | "private";
+                    /** @description Delete the image after this many seconds (60–2592000). */
+                    expires_in?: number;
+                    /** @description Signature lifetime for private URLs in seconds (60–2592000). */
+                    sign_expires_in?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Image generated and hosted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            /** @example img_a1b2c3d4e5f6 */
+                            id?: string;
+                            /** @description Permanent CDN URL. */
+                            url?: string;
+                            /** @description Same image as WebP/AVIF; prefer it for embedding. */
+                            optimized_url?: string;
+                            /** @example image/jpeg */
+                            mime_type?: string;
+                            size?: number;
+                            width?: number;
+                            height?: number;
+                            filename?: string;
+                            /** Format: date-time */
+                            created_at?: string;
+                            generation?: {
+                                /** @example flux-1-schnell */
+                                model?: string;
+                                /** @example 1 */
+                                credits_charged?: number;
+                                /** @description Credits left this month. */
+                                credits_remaining?: number;
+                            };
+                        };
+                    };
+                };
+            };
+            /** @description Invalid request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Invalid or missing API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Out of generation credits (generation_credits_exhausted), the model needs a paid plan (model_requires_paid_plan), or an upload/storage quota was reached */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Publishable keys can't generate images (generation_forbidden), or the account's email isn't verified (email_verification_required) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The prompt was refused (prompt_rejected) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Rate limit exceeded: 60 generations per hour per account, or the day's overall generation capacity is used up. Carries Retry-After. Credits are refunded. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The model failed or returned no usable image (generation_failed). Credits are refunded. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Image generation is temporarily unavailable (generation_unavailable). Credits are refunded. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The model timed out (generation_timeout). Credits are refunded; safe to retry. */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1034,6 +1304,14 @@ export interface operations {
                                 storage_bytes?: number;
                                 /** @description Uploads left this month (floored at 0). */
                                 uploads?: number;
+                            };
+                            /** @description AI image-generation credits (POST /v1/images/generate) for the current month. */
+                            generation?: {
+                                credits_used?: number;
+                                /** @description Monthly credit grant for the plan. */
+                                credits_limit?: number;
+                                /** @description Credits left this month (floored at 0). */
+                                credits_remaining?: number;
                             };
                         };
                     };
@@ -1365,6 +1643,144 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Error"];
                 };
+            };
+        };
+    };
+    start_checkout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    plan: "starter" | "pro";
+                };
+            };
+        };
+        responses: {
+            /** @description { url } to open in a browser */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `invalid_plan`: plan must be starter or pro */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or missing key or token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `email_not_verified`, `publishable_key_forbidden` or `test_key_forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `already_subscribed`: use the billing portal */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rate limit exceeded (10 per hour per account) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `billing_error`: Stripe call failed; retry shortly */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `billing_unavailable`: paid plans are not enabled */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    open_billing_portal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description { url } to open in a browser */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or missing key or token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `publishable_key_forbidden` or `test_key_forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `no_subscription`: no billing history for this account */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rate limit exceeded (10 per hour per account) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `billing_error`: Stripe call failed; retry shortly */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `billing_unavailable`: billing is not enabled */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -1886,6 +2302,49 @@ export interface operations {
             };
             /** @description Rate limit or monthly upload quota exceeded */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    dashboard_delete_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Image deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example true */
+                        success?: boolean;
+                    };
+                };
+            };
+            /** @description No valid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such image in this account */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
