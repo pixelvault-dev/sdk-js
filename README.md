@@ -20,6 +20,11 @@ console.log(image.url); // https://img.pixelvault.dev/...
 
 // Import from a URL, auto-delete after one hour
 await pv.images.upload({ url: "https://example.com/a.png", expiresIn: 3600 });
+
+// Generate an image from a prompt and host it in one call (spends monthly credits)
+const art = await pv.images.generate({ prompt: "flat vector hero, a robot at a laptop, no text" });
+console.log(art.url);        // https://img.pixelvault.dev/...
+console.log(art.generation); // { model: "flux-1-schnell", credits_charged: 1, credits_remaining: 9 }
 ```
 
 `apiKey` falls back to the `PIXELVAULT_API_KEY` environment variable. With no key at all, `images.upload({ file })`
@@ -30,11 +35,12 @@ makes an anonymous upload that expires after 30 days.
 | Call | What it does |
 |---|---|
 | `pv.images.upload({ file \| url, folder?, visibility?, expiresIn?, signExpiresIn? })` | Upload bytes or import a URL |
+| `pv.images.generate({ prompt, model?, folder?, visibility?, expiresIn? })` | Generate an image from a prompt and host it. Credits: `flux-1-schnell` and the SDXL models 1, Leonardo 20. Free plan: 10 credits a month, `flux-1-schnell` only |
 | `pv.images.uploadBatch({ collection, images })` | Up to 50 images in one collection |
 | `pv.images.list({ page?, perPage? })` / `pv.images.listAll()` | One page / async iterator over all images |
 | `pv.images.get(id)` / `pv.images.delete(id)` | Fetch / delete one image |
 | `pv.images.signUrl(id, { expiresIn? })` | Signed URL for a private image |
-| `pv.usage.get()` | Plan, usage, limits and what is left this month |
+| `pv.usage.get()` | Plan, usage, limits and what is left this month (including generation credits) |
 | `pv.keys.list()` / `.create({ label?, environment? })` / `.revoke(id)` | Manage your API keys (secret keys only) |
 | `pv.register({ email })` | Create an account, returns a first key once |
 | `pv.deviceLoginStart({ email })` + `pv.deviceLoginComplete({ email, code })` | Passwordless key minting |
@@ -58,7 +64,7 @@ try {
 ```
 
 The client retries `429` (honoring `Retry-After` up to 30 seconds) and, for `GET`/`DELETE` only, `5xx` and network
-errors. Uploads are never retried after a `5xx`, so a lost response cannot create a duplicate image. Tune with
+errors. Uploads and `images.generate` are never retried after a `5xx` or a network error, so a lost response cannot create a duplicate image or spend credits twice. Tune with
 `maxRetries` (default 2) and `timeoutMs` (default 60000).
 
 ## Types

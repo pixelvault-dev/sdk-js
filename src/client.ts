@@ -18,6 +18,8 @@ export type ListMeta = NonNullable<Ok<"list_images", 200>["meta"]>;
 export type DeviceLoginResult = NonNullable<Ok<"device_login_complete", 200>["data"]>;
 export type RegisteredAccount = NonNullable<Ok<"register_account", 201>["data"]>;
 export type BatchResult = NonNullable<Ok<"batch_upload", 201>["data"]>;
+/** The image plus `generation`: the model used and the credits charged and left. */
+export type GeneratedImage = NonNullable<Ok<"generate_image", 201>["data"]>;
 
 /** Bytes to upload. `Blob`/`File` keep their own name and type. */
 export type FileInput = Blob | ArrayBuffer | Uint8Array;
@@ -45,6 +47,34 @@ export interface UploadFileInput extends UploadOptions {
 export interface UploadUrlInput extends UploadOptions {
   /** https URL of an image to import. Requires an API key. */
   url: string;
+}
+
+/** Models for `images.generate`. Other ids are passed through, so new models work without an SDK release. */
+export type GenerationModel =
+  | "flux-1-schnell"
+  | "sdxl-lightning"
+  | "sdxl-base"
+  | "lucid-origin"
+  | "phoenix-1.0"
+  | (string & {});
+
+export interface GenerateInput {
+  /** What to draw (1–2000 characters). */
+  prompt: string;
+  /**
+   * Default `flux-1-schnell` (1 credit). `sdxl-lightning` and `sdxl-base` cost 1,
+   * `lucid-origin` and `phoenix-1.0` (Leonardo) cost 20. The free plan can only use the default.
+   */
+  model?: GenerationModel;
+  /** Optional folder name. */
+  folder?: string;
+  /** `private` (secret key only) returns a signed URL. Default `public`. */
+  visibility?: "public" | "private";
+  /** Signature lifetime in seconds for a private image (60–2592000). */
+  signExpiresIn?: number;
+  /** Auto-delete after this many seconds (60–2592000). Omit to keep it. */
+  expiresIn?: number;
+  signal?: AbortSignal;
 }
 
 export interface BatchUploadInput {
@@ -203,6 +233,32 @@ class ImagesResource {
       method: "POST",
       path: "/v1/images",
       form,
+      signal: input.signal,
+    });
+    return res.data;
+  }
+
+  /**
+   * Generate an image from a prompt and host it in one call. Spends credits from the
+   * account's monthly grant (free 10, Starter 300, Pro 1,500; they reset on the 1st, UTC).
+   * The result is a normal image plus `generation: { model, credits_charged, credits_remaining }`
+   * with the field names exactly as the API returns them. A failed generation is refunded. Needs a
+   * secret key and a verified email. Never retried after a 5xx or a network error, so a
+   * lost response cannot spend credits twice. A call can take several seconds; raise
+   * `timeoutMs` on the client if you use the slower models.
+   */
+  async generate(input: GenerateInput): Promise<GeneratedImage> {
+    const res = await request<{ data: GeneratedImage }>(this.cfg, {
+      method: "POST",
+      path: "/v1/images/generate",
+      json: {
+        prompt: input.prompt,
+        model: input.model,
+        folder: input.folder,
+        visibility: input.visibility,
+        sign_expires_in: input.signExpiresIn,
+        expires_in: input.expiresIn,
+      },
       signal: input.signal,
     });
     return res.data;

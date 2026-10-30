@@ -168,3 +168,90 @@ describe("keys and auth", () => {
     expect((f.mock.calls[0] as unknown as [URL])[0].pathname).toBe("/v1/keys/key%2F1");
   });
 });
+
+const GENERATED = {
+  ...IMG,
+  optimized_url: "https://img.pixelvault.dev/p/i.png?fmt=auto&q=85",
+  generation: { model: "flux-1-schnell", credits_charged: 1, credits_remaining: 9 },
+};
+
+describe("images.generate", () => {
+  it("POSTs the prompt as JSON with snake_case options and returns the generation block", async () => {
+    const f = vi.fn(async () => json({ data: GENERATED }, 201));
+    const img = await client(f as unknown as typeof fetch).images.generate({
+      prompt: "a red bicycle",
+      model: "lucid-origin",
+      folder: "heroes",
+      expiresIn: 3600,
+      visibility: "private",
+      signExpiresIn: 600,
+    });
+    expect(img.generation.credits_remaining).toBe(9);
+    expect(img.optimized_url).toContain("fmt=auto");
+    const [url, init] = f.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).toBe("https://api.pixelvault.dev/v1/images/generate");
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer pv_live_test");
+    expect(headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(init.body as string)).toEqual({
+      prompt: "a red bicycle",
+      model: "lucid-origin",
+      folder: "heroes",
+      expires_in: 3600,
+      visibility: "private",
+      sign_expires_in: 600,
+    });
+  });
+
+  it("sends only the prompt when no options are set", async () => {
+    const f = vi.fn(async () => json({ data: GENERATED }, 201));
+    await client(f as unknown as typeof fetch).images.generate({ prompt: "a lake" });
+    const [, init] = f.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ prompt: "a lake" });
+  });
+
+  it("surfaces credit exhaustion with the API's code", async () => {
+    const f = vi.fn(async () =>
+      json({ error: { code: "generation_credits_exhausted", message: "0 left" } }, 402),
+    );
+    const err = await client(f as unknown as typeof fetch)
+      .images.generate({ prompt: "x" })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(PixelVaultError);
+    expect(err.status).toBe(402);
+    expect(err.code).toBe("generation_credits_exhausted");
+  });
+
+  it("is never retried after a 5xx, so a lost response cannot spend credits twice", async () => {
+    const f = vi.fn(async () =>
+      json({ error: { code: "generation_failed", message: "try again" } }, 502),
+    );
+    await expect(
+      client(f as unknown as typeof fetch).images.generate({ prompt: "x" }),
+    ).rejects.toMatchObject({ status: 502, code: "generation_failed" });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a model id the SDK doesn't know yet", async () => {
+    const f = vi.fn(async () => json({ data: GENERATED }, 201));
+    await client(f as unknown as typeof fetch).images.generate({ prompt: "x", model: "future-model-9" });
+    const [, init] = f.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(JSON.parse(init.body as string).model).toBe("future-model-9");
+  });
+});
+
+describe("usage.get", () => {
+  it("exposes generation credits", async () => {
+    const f = vi.fn(async () =>
+      json({
+        data: {
+          plan: "free",
+          generation: { credits_used: 1, credits_limit: 10, credits_remaining: 9 },
+        },
+      }),
+    );
+    const u = await client(f as unknown as typeof fetch).usage.get();
+    expect(u.generation?.credits_remaining).toBe(9);
+  });
+});
