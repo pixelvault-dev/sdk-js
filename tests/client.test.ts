@@ -255,3 +255,47 @@ describe("usage.get", () => {
     expect(u.generation?.credits_remaining).toBe(9);
   });
 });
+
+describe("image metadata", () => {
+  it("sends metadata as a JSON string in multipart uploads", async () => {
+    const f = vi.fn(async () => json({ data: IMG }, 201));
+    await client(f as unknown as typeof fetch).images.upload({
+      file: new Uint8Array([1]),
+      filename: "a.png",
+      metadata: { env: "prod", n: 3 },
+    });
+    const [, init] = f.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(JSON.parse((init.body as FormData).get("metadata") as string)).toEqual({ env: "prod", n: 3 });
+  });
+
+  it("sends metadata in the JSON body for url imports", async () => {
+    const f = vi.fn(async () => json({ data: IMG }, 201));
+    await client(f as unknown as typeof fetch).images.upload({ url: "https://example.com/a.png", metadata: { a: 1 } });
+    const [, init] = f.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({ url: "https://example.com/a.png", metadata: { a: 1 } });
+  });
+
+  it("list/listAll send the metadata filter as a JSON query param and omit it when empty", async () => {
+    const f = vi.fn(async () => json({ data: [], meta: { total: 0, page: 1, per_page: 20 } }));
+    const pv = client(f as unknown as typeof fetch);
+    await pv.images.list({ metadata: { env: "prod" } });
+    const url = (f.mock.calls[0] as unknown as [URL])[0];
+    expect(JSON.parse(url.searchParams.get("metadata") as string)).toEqual({ env: "prod" });
+    await pv.images.list({ metadata: {} });
+    expect((f.mock.calls[1] as unknown as [URL])[0].searchParams.has("metadata")).toBe(false);
+    for await (const _ of pv.images.listAll({ metadata: { a: 1 } })) void _;
+    expect((f.mock.calls[2] as unknown as [URL])[0].searchParams.get("metadata")).toBe('{"a":1}');
+  });
+
+  it("updateMetadata PATCHes the object (or null) and returns the stored value", async () => {
+    const f = vi.fn(async (_u: URL, init: RequestInit) =>
+      json({ data: { id: "img_1", metadata: JSON.parse(String(init.body)).metadata } }),
+    );
+    const pv = client(f as unknown as typeof fetch);
+    expect(await pv.images.updateMetadata("img_1", { a: 1 })).toEqual({ a: 1 });
+    const [url, init] = f.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.pathname).toBe("/v1/images/img_1");
+    expect(init.method).toBe("PATCH");
+    expect(await pv.images.updateMetadata("img_1", null)).toBeNull();
+  });
+});

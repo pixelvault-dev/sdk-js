@@ -21,6 +21,14 @@ export type BatchResult = NonNullable<Ok<"batch_upload", 201>["data"]>;
 /** The image plus `generation`: the model used and the credits charged and left. */
 export type GeneratedImage = NonNullable<Ok<"generate_image", 201>["data"]>;
 
+export interface ListParams {
+  page?: number;
+  perPage?: number;
+  /** Only images whose custom metadata contains every key/value given (typed match; nested objects by containment). */
+  metadata?: Record<string, unknown>;
+  signal?: AbortSignal;
+}
+
 /** Bytes to upload. `Blob`/`File` keep their own name and type. */
 export type FileInput = Blob | ArrayBuffer | Uint8Array;
 
@@ -33,6 +41,12 @@ export interface UploadOptions {
   signExpiresIn?: number;
   /** Auto-delete after this many seconds (60–2592000). Omit for permanent. */
   expiresIn?: number;
+  /**
+   * Custom metadata (JSON object, up to 50 top-level keys / 4 KB), filterable later with
+   * `images.list({ metadata })`. Needs an API key. Ignored if the upload returns an existing
+   * image (use `images.updateMetadata`).
+   */
+  metadata?: Record<string, unknown>;
   signal?: AbortSignal;
 }
 
@@ -215,6 +229,7 @@ class ImagesResource {
           visibility: input.visibility,
           sign_expires_in: input.signExpiresIn,
           expires_in: input.expiresIn,
+          metadata: input.metadata,
         },
         signal: input.signal,
       });
@@ -228,6 +243,7 @@ class ImagesResource {
     if (input.visibility) form.set("visibility", input.visibility);
     if (input.signExpiresIn !== undefined) form.set("sign_expires_in", String(input.signExpiresIn));
     if (input.expiresIn !== undefined) form.set("expires_in", String(input.expiresIn));
+    if (input.metadata !== undefined) form.set("metadata", JSON.stringify(input.metadata));
 
     const res = await request<{ data: Image }>(this.cfg, {
       method: "POST",
@@ -292,14 +308,21 @@ class ImagesResource {
   }
 
   /** One page of images, newest first. */
-  async list(params: { page?: number; perPage?: number; signal?: AbortSignal } = {}): Promise<{
+  async list(params: ListParams = {}): Promise<{
     data: Image[];
     meta: ListMeta;
   }> {
     const res = await request<{ data?: Image[]; meta?: ListMeta }>(this.cfg, {
       method: "GET",
       path: "/v1/images",
-      query: { page: params.page, per_page: params.perPage },
+      query: {
+        page: params.page,
+        per_page: params.perPage,
+        metadata:
+          params.metadata && Object.keys(params.metadata).length > 0
+            ? JSON.stringify(params.metadata)
+            : undefined,
+      },
       signal: params.signal,
     });
     return {
@@ -309,9 +332,9 @@ class ImagesResource {
   }
 
   /** Iterate every image across pages: `for await (const img of pv.images.listAll())`. */
-  async *listAll(params: { perPage?: number; signal?: AbortSignal } = {}): AsyncGenerator<Image> {
+  async *listAll(params: Omit<ListParams, "page"> = {}): AsyncGenerator<Image> {
     for (let page = 1; ; page++) {
-      const { data, meta } = await this.list({ page, perPage: params.perPage, signal: params.signal });
+      const { data, meta } = await this.list({ ...params, page });
       yield* data;
       const perPage = meta.per_page ?? data.length;
       if (data.length === 0 || page * perPage >= (meta.total ?? 0)) return;
@@ -325,6 +348,24 @@ class ImagesResource {
       signal: opts.signal,
     });
     return res.data;
+  }
+
+  /**
+   * Replace an image's custom metadata. The object REPLACES the stored one (it is not merged),
+   * so send every key to keep; `null` clears it. Returns the stored metadata.
+   */
+  async updateMetadata(
+    id: string,
+    metadata: Record<string, unknown> | null,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<Record<string, unknown> | null> {
+    const res = await request<{ data: { id: string; metadata: Record<string, unknown> | null } }>(this.cfg, {
+      method: "PATCH",
+      path: `/v1/images/${encodeURIComponent(id)}`,
+      json: { metadata },
+      signal: opts.signal,
+    });
+    return res.data.metadata ?? null;
   }
 
   async delete(id: string, opts: { signal?: AbortSignal } = {}): Promise<void> {
