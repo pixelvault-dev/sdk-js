@@ -1,6 +1,6 @@
 {
   "name": "@pixelvault-dev/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Official JavaScript/TypeScript SDK for PixelVault — agent-first image hosting",
   "type": "module",
   "main": "./dist/index.cjs",

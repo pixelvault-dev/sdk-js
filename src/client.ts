@@ -26,6 +26,11 @@ export interface ListParams {
   perPage?: number;
   /** Only images whose custom metadata contains every key/value given (typed match; nested objects by containment). */
   metadata?: Record<string, unknown>;
+  /**
+   * Full-text search over the AI description (alt text, caption, OCR text) of images uploaded
+   * with `describe: true`, best match first. Words are ANDed; "quoted phrases" and `-word` work.
+   */
+  q?: string;
   signal?: AbortSignal;
 }
 
@@ -47,6 +52,14 @@ export interface UploadOptions {
    * image (use `images.updateMetadata`).
    */
   metadata?: Record<string, unknown>;
+  /**
+   * Generate an AI description (alt text, caption, OCR text) in the background (needs a secret
+   * key and a verified email). The returned image has `description.status === "pending"`; use
+   * `images.waitForDescription(id)` or `images.get(id)` for the result. Plan-gated (free 20 in
+   * total, Starter 1,000/mo, Pro 10,000/mo); if it can't start, the upload still succeeds and the
+   * image has `describe_skipped`. The text is untrusted model output: escape it before rendering.
+   */
+  describe?: boolean;
   signal?: AbortSignal;
 }
 
@@ -230,6 +243,7 @@ class ImagesResource {
           sign_expires_in: input.signExpiresIn,
           expires_in: input.expiresIn,
           metadata: input.metadata,
+          describe: input.describe ? true : undefined,
         },
         signal: input.signal,
       });
@@ -244,6 +258,7 @@ class ImagesResource {
     if (input.signExpiresIn !== undefined) form.set("sign_expires_in", String(input.signExpiresIn));
     if (input.expiresIn !== undefined) form.set("expires_in", String(input.expiresIn));
     if (input.metadata !== undefined) form.set("metadata", JSON.stringify(input.metadata));
+    if (input.describe) form.set("describe", "true");
 
     const res = await request<{ data: Image }>(this.cfg, {
       method: "POST",
@@ -318,6 +333,7 @@ class ImagesResource {
       query: {
         page: params.page,
         per_page: params.perPage,
+        q: params.q && params.q.trim() !== "" ? params.q : undefined,
         metadata:
           params.metadata && Object.keys(params.metadata).length > 0
             ? JSON.stringify(params.metadata)
@@ -338,6 +354,29 @@ class ImagesResource {
       yield* data;
       const perPage = meta.per_page ?? data.length;
       if (data.length === 0 || page * perPage >= (meta.total ?? 0)) return;
+    }
+  }
+
+  /**
+   * Wait for an image's AI description (uploaded with `describe: true`) to finish. Resolves with
+   * the final `description` (`done` or `failed`), or the last `pending` state if `timeoutMs`
+   * (default 40 s) runs out, or `null` if the image has no description. The API reports a
+   * description whose job never finished as `failed`, so a lost job doesn't wait forever.
+   */
+  async waitForDescription(
+    id: string,
+    opts: { timeoutMs?: number; intervalMs?: number; signal?: AbortSignal } = {},
+  ): Promise<NonNullable<Image["description"]> | null> {
+    const interval = opts.intervalMs ?? 2000;
+    const deadline = Date.now() + (opts.timeoutMs ?? 40_000);
+    for (;;) {
+      const img = await this.get(id, { signal: opts.signal });
+      const d = (img.description ?? null) as (NonNullable<Image["description"]> & { status?: string }) | null;
+      if (!d || d.status !== "pending" || Date.now() >= deadline) return d;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, interval);
+        opts.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(opts.signal?.reason ?? new Error("aborted")); }, { once: true });
+      });
     }
   }
 

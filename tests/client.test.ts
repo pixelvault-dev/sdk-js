@@ -299,3 +299,48 @@ describe("image metadata", () => {
     expect(await pv.images.updateMetadata("img_1", null)).toBeNull();
   });
 });
+
+describe("AI descriptions", () => {
+  it("sends describe=true in multipart and JSON uploads, only when set", async () => {
+    const f = vi.fn(async () => json({ data: IMG }, 201));
+    const pv = client(f as unknown as typeof fetch);
+    await pv.images.upload({ file: new Uint8Array([1]), filename: "a.png", describe: true });
+    await pv.images.upload({ file: new Uint8Array([1]), filename: "a.png" });
+    await pv.images.upload({ url: "https://example.com/a.png", describe: true });
+    await pv.images.upload({ url: "https://example.com/a.png" });
+    const call = (i: number) => (f.mock.calls[i] as unknown as [URL, RequestInit])[1];
+    expect((call(0).body as FormData).get("describe")).toBe("true");
+    expect((call(1).body as FormData).get("describe")).toBeNull();
+    expect(JSON.parse(call(2).body as string).describe).toBe(true);
+    expect(JSON.parse(call(3).body as string)).not.toHaveProperty("describe");
+  });
+
+  it("list/listAll send q and omit it when blank", async () => {
+    const f = vi.fn(async () => json({ data: [], meta: { total: 0, page: 1, per_page: 20 } }));
+    const pv = client(f as unknown as typeof fetch);
+    await pv.images.list({ q: "invoice 4821" });
+    expect((f.mock.calls[0] as unknown as [URL])[0].searchParams.get("q")).toBe("invoice 4821");
+    await pv.images.list({ q: "  " });
+    expect((f.mock.calls[1] as unknown as [URL])[0].searchParams.has("q")).toBe(false);
+    for await (const _ of pv.images.listAll({ q: "cat" })) void _;
+    expect((f.mock.calls[2] as unknown as [URL])[0].searchParams.get("q")).toBe("cat");
+  });
+
+  it("waitForDescription polls until done, returns failed/null immediately, gives up at the timeout", async () => {
+    const states = [{ status: "pending" }, { status: "pending" }, { status: "done", alt: "A cat" }];
+    let i = 0;
+    const f = vi.fn(async () => json({ data: { ...IMG, description: states[Math.min(i++, states.length - 1)] } }));
+    const pv = client(f as unknown as typeof fetch);
+    const done = await pv.images.waitForDescription("img_1", { intervalMs: 1 });
+    expect(done).toMatchObject({ status: "done", alt: "A cat" });
+    expect(f).toHaveBeenCalledTimes(3);
+
+    const failed = vi.fn(async () => json({ data: { ...IMG, description: { status: "failed", error: "describe_timeout" } } }));
+    expect(await client(failed as unknown as typeof fetch).images.waitForDescription("img_1", { intervalMs: 1 })).toMatchObject({ status: "failed" });
+    const none = vi.fn(async () => json({ data: { ...IMG, description: null } }));
+    expect(await client(none as unknown as typeof fetch).images.waitForDescription("img_1", { intervalMs: 1 })).toBeNull();
+
+    const pending = vi.fn(async () => json({ data: { ...IMG, description: { status: "pending" } } }));
+    expect(await client(pending as unknown as typeof fetch).images.waitForDescription("img_1", { intervalMs: 1, timeoutMs: 5 })).toMatchObject({ status: "pending" });
+  });
+});

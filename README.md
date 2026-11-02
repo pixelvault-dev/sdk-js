@@ -34,10 +34,11 @@ makes an anonymous upload that expires after 30 days.
 
 | Call | What it does |
 |---|---|
-| `pv.images.upload({ file \| url, folder?, visibility?, expiresIn?, signExpiresIn?, metadata? })` | Upload bytes or import a URL |
+| `pv.images.upload({ file \| url, folder?, visibility?, expiresIn?, signExpiresIn?, metadata?, describe? })` | Upload bytes or import a URL |
 | `pv.images.generate({ prompt, model?, folder?, visibility?, expiresIn? })` | Generate an image from a prompt and host it. Credits: `flux-1-schnell` and the SDXL models 1, Leonardo 20. Free plan: 10 credits a month, `flux-1-schnell` only |
 | `pv.images.uploadBatch({ collection, images })` | Up to 50 images in one collection |
-| `pv.images.list({ page?, perPage?, metadata? })` / `pv.images.listAll({ metadata? })` | One page / async iterator over all images, optionally filtered by custom metadata (all pairs must match) |
+| `pv.images.list({ page?, perPage?, metadata?, q? })` / `pv.images.listAll({ metadata?, q? })` | One page / async iterator over all images, optionally filtered by custom metadata (all pairs must match) or searched by AI description (`q`: alt text, caption, OCR text, best match first) |
+| `pv.images.waitForDescription(id, { timeoutMs? })` | Wait for the AI description of an image uploaded with `describe: true` (alt, caption, OCR text; async, ~10 s; plan-gated: free 20 in total, Starter 1,000/mo, Pro 10,000/mo; needs a secret key). Treat the text as untrusted model output |
 | `pv.images.updateMetadata(id, metadata \| null)` | Replace an image's custom metadata (replaces, not merges; `null` clears). Set it at upload with `metadata: { ... }` |
 | `pv.images.get(id)` / `pv.images.delete(id)` | Fetch / delete one image |
 | `pv.images.signUrl(id, { expiresIn? })` | Signed URL for a private image |
