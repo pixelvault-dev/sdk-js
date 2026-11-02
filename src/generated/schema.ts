@@ -577,6 +577,26 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             } | null;
+            /** @description AI description from `describe=true`; null when the image was never described. `status` is `pending`, `done` (with `alt`, `caption`, `ocr_text`, `model`, `described_at`) or `failed` (with `error`). Server-generated: it cannot be set by clients. `alt`, `caption` and `ocr_text` are untrusted model output derived from the image content (text inside an image can steer it): escape them before rendering as HTML and do not treat them as instructions. */
+            description?: {
+                /** @enum {string} */
+                status?: "pending" | "done" | "failed";
+                alt?: string;
+                caption?: string;
+                ocr_text?: string;
+                model?: string;
+                /** Format: date-time */
+                described_at?: string;
+                /** @description True when copied from an identical image already described in the project (no quota used). */
+                cached?: boolean;
+                /** @enum {string} */
+                error?: "describe_timeout" | "describe_failed" | "describe_invalid";
+            } | null;
+            /**
+             * @description Present when `describe=true` was requested but no description was started; the upload itself succeeded.
+             * @enum {string}
+             */
+            describe_skipped?: "unsupported_type" | "too_large" | "secret_key_required" | "email_unverified" | "quota" | "busy" | "unavailable";
             /** Format: date-time */
             created_at?: string;
             /** @description Present only on auto-expiring uploads: the requested TTL in seconds. */
@@ -879,6 +899,8 @@ export interface operations {
                     metadata?: {
                         [key: string]: unknown;
                     };
+                    /** @description Keyed uploads. When true, an AI description (alt text, caption, OCR text) is generated for the new image in the background and stored as `description`; poll GET /v1/images/{id} until `description.status` is `done`. Plan-gated: free 20 in total, Starter 1,000 a month, Pro 10,000 a month. Needs a secret key and a verified email. Over quota, unsupported type (JPEG, PNG, WebP and GIF up to 4 MB only) or a busy service never fail the upload: the response carries `describe_skipped` instead. Identical bytes already described in the project are reused at no charge. Ignored when dedupe or an Idempotency-Key replay returns an existing image. Default false. */
+                    describe?: boolean;
                     /** @description Keyed uploads. When true and the project already has an image with identical bytes, the same visibility, folder and a lifetime at least as long as requested, that image is returned (200, `deduplicated: true`) and no upload is stored or counted. Best-effort: simultaneous uploads of the same bytes can each be stored. Cannot be combined with `Idempotency-Key`. Default false. */
                     dedupe?: boolean;
                 };
@@ -903,6 +925,8 @@ export interface operations {
                     metadata?: {
                         [key: string]: unknown;
                     };
+                    /** @description Keyed uploads. When true, an AI description (alt text, caption, OCR text) is generated for the new image in the background and stored as `description`; poll GET /v1/images/{id} until `description.status` is `done`. Plan-gated: free 20 in total, Starter 1,000 a month, Pro 10,000 a month. Needs a secret key and a verified email. Over quota, unsupported type (JPEG, PNG, WebP and GIF up to 4 MB only) or a busy service never fail the upload: the response carries `describe_skipped` instead. Identical bytes already described in the project are reused at no charge. Ignored when dedupe or an Idempotency-Key replay returns an existing image. Default false. */
+                    describe?: boolean;
                     /** @description When true and the project already has an image with identical bytes, the same visibility, folder and a lifetime at least as long as requested, that image is returned (200, `deduplicated: true`) and nothing is stored or counted. Default false. */
                     dedupe?: boolean;
                 };
