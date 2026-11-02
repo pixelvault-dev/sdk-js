@@ -109,7 +109,11 @@ export interface paths {
         delete: operations["delete_image"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Replace image metadata
+         * @description Replace an image's custom metadata. The object you send replaces the stored one (it is not merged); send `null` or `{}` to clear it. Max 50 top-level keys / 4 KB serialized.
+         */
+        patch: operations["update_image_metadata"];
         trace?: never;
     };
     "/v1/images/generate": {
@@ -455,6 +459,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/playground/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Anonymous image generation (browser tool)
+         * @description Powers the free tool at pixelvault.dev/tools/ai-image-generator: generate one image from a prompt with FLUX.1 schnell, no account or API key, and get a temporary public CDN URL (removed within 24 hours; keep it permanently by signing up and redeeming `claim_token` at POST /v1/claim). Requires a Cloudflare Turnstile token, so it is meant for browsers; agents and scripts should use POST /v1/images/generate with an API key. Limited to 3 images per IP per day and a small global daily cap.
+         */
+        post: operations["playground_generate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/playground/upload": {
         parameters: {
             query?: never;
@@ -549,6 +573,10 @@ export interface components {
             /** @example photo.jpg */
             filename?: string;
             folder?: string | null;
+            /** @description Custom metadata set at upload or via PATCH /v1/images/{id}; null when none. */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
             /** Format: date-time */
             created_at?: string;
             /** @description Present only on auto-expiring uploads: the requested TTL in seconds. */
@@ -778,6 +806,12 @@ export interface operations {
             query?: {
                 page?: number;
                 per_page?: number;
+                /** @description Only images in this collection. */
+                collection_id?: string;
+                /** @description JSON object; returns images whose custom metadata contains every key/value pair (e.g. `{"env":"prod"}`). Typed values match exactly; nested objects match by containment. Conflicting duplicates (the same key with different values across `metadata` and `meta[key]`) return 400. */
+                metadata?: string;
+                /** @description Shorthand string match on one metadata key, e.g. `?meta[env]=prod`. Use it once per key, for several different keys; combines (AND) with `metadata`. */
+                "meta[key]"?: string;
             };
             header?: never;
             path?: never;
@@ -841,6 +875,10 @@ export interface operations {
                     sign_expires_in?: number;
                     /** @description Optional auto-expiry in seconds (60–2592000). The image is deleted by an hourly sweep after this time, so removal can lag the TTL by up to about two hours; the response echoes `expires_in` and `temporary: true`. Omit for a permanent image (keyed uploads). */
                     expires_in?: number;
+                    /** @description Optional custom metadata (JSON object, max 50 top-level keys / 4 KB serialized) stored with the image and filterable via `GET /v1/images?metadata=...` or `meta[key]=value`. Multipart: send it as a JSON string. Keyed uploads only (ignored on keyless uploads), and ignored when `dedupe` or an `Idempotency-Key` replay returns an existing image: use `PATCH /v1/images/{id}` to change it. NUL characters and unpaired surrogates are rejected. Client-supplied; do not store secrets. */
+                    metadata?: {
+                        [key: string]: unknown;
+                    };
                     /** @description Keyed uploads. When true and the project already has an image with identical bytes, the same visibility, folder and a lifetime at least as long as requested, that image is returned (200, `deduplicated: true`) and no upload is stored or counted. Best-effort: simultaneous uploads of the same bytes can each be stored. Cannot be combined with `Idempotency-Key`. Default false. */
                     dedupe?: boolean;
                 };
@@ -861,6 +899,10 @@ export interface operations {
                     sign_expires_in?: number;
                     /** @description Optional auto-expiry in seconds (60–2592000). The image is deleted by an hourly sweep after this time, so removal can lag the TTL by up to about two hours; the response echoes `expires_in` and `temporary: true`. Omit for a permanent image. */
                     expires_in?: number;
+                    /** @description Optional custom metadata (JSON object, max 50 top-level keys / 4 KB serialized) stored with the image and filterable via `GET /v1/images?metadata=...` or `meta[key]=value`. Multipart: send it as a JSON string. Keyed uploads only (ignored on keyless uploads), and ignored when `dedupe` or an `Idempotency-Key` replay returns an existing image: use `PATCH /v1/images/{id}` to change it. NUL characters and unpaired surrogates are rejected. Client-supplied; do not store secrets. */
+                    metadata?: {
+                        [key: string]: unknown;
+                    };
                     /** @description When true and the project already has an image with identical bytes, the same visibility, folder and a lifetime at least as long as requested, that image is returned (200, `deduplicated: true`) and nothing is stored or counted. Default false. */
                     dedupe?: boolean;
                 };
@@ -1003,6 +1045,79 @@ export interface operations {
             };
             /** @description Image not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    update_image_metadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    metadata: {
+                        [key: string]: unknown;
+                    } | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            id?: string;
+                            metadata?: {
+                                [key: string]: unknown;
+                            } | null;
+                        };
+                    };
+                };
+            };
+            /** @description Invalid metadata */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Invalid or missing API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Image not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Request body larger than 16 KB */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2354,6 +2469,110 @@ export interface operations {
             };
         };
     };
+    playground_generate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example a watercolor fox reading a book */
+                    prompt: string;
+                    /** @description Token from the Cloudflare Turnstile widget. */
+                    turnstile_token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Image generated */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            /** @example tmp_a1b2c3d4e5f6 */
+                            id?: string;
+                            /** Format: uri */
+                            url?: string;
+                            /** @example image/jpeg */
+                            mime_type?: string;
+                            /** @example 142000 */
+                            size?: number;
+                            /** @example 86400 */
+                            expires_in?: number;
+                            /** @description Exchange at POST /v1/claim to keep the image permanently in a signed-in account. Valid for 24 hours. */
+                            claim_token?: string;
+                            /** @example 86400 */
+                            claim_expires_in?: number;
+                            generation?: {
+                                /** @example flux-1-schnell */
+                                model?: string;
+                            };
+                        };
+                    };
+                };
+            };
+            /** @description Invalid body, or the prompt was refused (validation_error, prompt_rejected) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Human check failed (human_check_failed) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Daily free limit or global capacity reached (free_limit_reached, free_capacity_reached), or rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Generation failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Generation unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Generation timed out */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     playground_upload: {
         parameters: {
             query?: never;
@@ -2495,7 +2714,7 @@ export interface operations {
                 /** @description Saturation multiplier, snapped to 0/0.5/1.5/2. 0 = grayscale; 1 = no change. */
                 saturation?: number;
                 /**
-                 * @description Watermark: the filename of another RASTER image (png/jpg/webp/avif) in the SAME project (e.g. img_logo.png — optionally folder-prefixed), tiled edge-to-edge at its native size over the base. Bake opacity into the source PNG. Must be your own uploaded raster image — not an external URL and not SVG. A missing filename is ignored (the base is served).
+                 * @description Watermark: the CDN path of another RASTER image (png/jpg/webp/avif) in the SAME project: its image_id.ext (e.g. img_logo.png), prefixed with its folder if it has one — not the original upload filename. Tiled edge-to-edge at its native size over the base. Bake opacity into the source PNG. Must be your own uploaded raster image — not an external URL and not SVG. A missing or unknown path is ignored (the base is served).
                  * @example img_logo.png
                  */
                 tile?: string;

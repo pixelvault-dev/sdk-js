@@ -1,6 +1,6 @@
 import { PixelVaultError } from "./errors.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 export interface HttpConfig {
   baseUrl: string;
@@ -12,7 +12,7 @@ export interface HttpConfig {
 }
 
 export interface RequestOptions {
-  method: "GET" | "POST" | "DELETE";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   query?: Record<string, string | number | undefined>;
   json?: unknown;

@@ -34,10 +34,11 @@ makes an anonymous upload that expires after 30 days.
 
 | Call | What it does |
 |---|---|
-| `pv.images.upload({ file \| url, folder?, visibility?, expiresIn?, signExpiresIn? })` | Upload bytes or import a URL |
+| `pv.images.upload({ file \| url, folder?, visibility?, expiresIn?, signExpiresIn?, metadata? })` | Upload bytes or import a URL |
 | `pv.images.generate({ prompt, model?, folder?, visibility?, expiresIn? })` | Generate an image from a prompt and host it. Credits: `flux-1-schnell` and the SDXL models 1, Leonardo 20. Free plan: 10 credits a month, `flux-1-schnell` only |
 | `pv.images.uploadBatch({ collection, images })` | Up to 50 images in one collection |
-| `pv.images.list({ page?, perPage? })` / `pv.images.listAll()` | One page / async iterator over all images |
+| `pv.images.list({ page?, perPage?, metadata? })` / `pv.images.listAll({ metadata? })` | One page / async iterator over all images, optionally filtered by custom metadata (all pairs must match) |
+| `pv.images.updateMetadata(id, metadata \| null)` | Replace an image's custom metadata (replaces, not merges; `null` clears). Set it at upload with `metadata: { ... }` |
 | `pv.images.get(id)` / `pv.images.delete(id)` | Fetch / delete one image |
 | `pv.images.signUrl(id, { expiresIn? })` | Signed URL for a private image |
 | `pv.usage.get()` | Plan, usage, limits and what is left this month (including generation credits) |

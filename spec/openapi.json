@@ -98,6 +98,14 @@
               "null"
             ]
           },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Custom metadata set at upload or via PATCH /v1/images/{id}; null when none."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -483,6 +491,11 @@
                     "maximum": 2592000,
                     "description": "Optional auto-expiry in seconds (60–2592000). The image is deleted by an hourly sweep after this time, so removal can lag the TTL by up to about two hours; the response echoes `expires_in` and `temporary: true`. Omit for a permanent image (keyed uploads)."
                   },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Optional custom metadata (JSON object, max 50 top-level keys / 4 KB serialized) stored with the image and filterable via `GET /v1/images?metadata=...` or `meta[key]=value`. Multipart: send it as a JSON string. Keyed uploads only (ignored on keyless uploads), and ignored when `dedupe` or an `Idempotency-Key` replay returns an existing image: use `PATCH /v1/images/{id}` to change it. NUL characters and unpaired surrogates are rejected. Client-supplied; do not store secrets."
+                  },
                   "dedupe": {
                     "type": "boolean",
                     "description": "Keyed uploads. When true and the project already has an image with identical bytes, the same visibility, folder and a lifetime at least as long as requested, that image is returned (200, `deduplicated: true`) and no upload is stored or counted. Best-effort: simultaneous uploads of the same bytes can each be stored. Cannot be combined with `Idempotency-Key`. Default false."
@@ -523,6 +536,11 @@
                     "minimum": 60,
                     "maximum": 2592000,
                     "description": "Optional auto-expiry in seconds (60–2592000). The image is deleted by an hourly sweep after this time, so removal can lag the TTL by up to about two hours; the response echoes `expires_in` and `temporary: true`. Omit for a permanent image."
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Optional custom metadata (JSON object, max 50 top-level keys / 4 KB serialized) stored with the image and filterable via `GET /v1/images?metadata=...` or `meta[key]=value`. Multipart: send it as a JSON string. Keyed uploads only (ignored on keyless uploads), and ignored when `dedupe` or an `Idempotency-Key` replay returns an existing image: use `PATCH /v1/images/{id}` to change it. NUL characters and unpaired surrogates are rejected. Client-supplied; do not store secrets."
                   },
                   "dedupe": {
                     "type": "boolean",
@@ -640,6 +658,30 @@
               "maximum": 100,
               "default": 20
             }
+          },
+          {
+            "name": "collection_id",
+            "in": "query",
+            "description": "Only images in this collection.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "JSON object; returns images whose custom metadata contains every key/value pair (e.g. `{\"env\":\"prod\"}`). Typed values match exactly; nested objects match by containment. Conflicting duplicates (the same key with different values across `metadata` and `meta[key]`) return 400.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "meta[key]",
+            "in": "query",
+            "description": "Shorthand string match on one metadata key, e.g. `?meta[env]=prod`. Use it once per key, for several different keys; combines (AND) with `metadata`.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -740,6 +782,121 @@
           },
           "404": {
             "description": "Image not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "update_image_metadata",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Replace image metadata",
+        "description": "Replace an image's custom metadata. The object you send replaces the stored one (it is not merged); send `null` or `{}` to clear it. Max 50 top-level keys / 4 KB serialized.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "img_a1b2c3d4e5f6"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "metadata": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "additionalProperties": true
+                  }
+                },
+                "required": [
+                  "metadata"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "metadata": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "additionalProperties": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Image not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body larger than 16 KB",
             "content": {
               "application/json": {
                 "schema": {
@@ -2757,6 +2914,158 @@
         }
       }
     },
+    "/v1/playground/generate": {
+      "post": {
+        "operationId": "playground_generate",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Anonymous image generation (browser tool)",
+        "description": "Powers the free tool at pixelvault.dev/tools/ai-image-generator: generate one image from a prompt with FLUX.1 schnell, no account or API key, and get a temporary public CDN URL (removed within 24 hours; keep it permanently by signing up and redeeming `claim_token` at POST /v1/claim). Requires a Cloudflare Turnstile token, so it is meant for browsers; agents and scripts should use POST /v1/images/generate with an API key. Limited to 3 images per IP per day and a small global daily cap.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt",
+                  "turnstile_token"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "example": "a watercolor fox reading a book"
+                  },
+                  "turnstile_token": {
+                    "type": "string",
+                    "description": "Token from the Cloudflare Turnstile widget."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Image generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "tmp_a1b2c3d4e5f6"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "mime_type": {
+                          "type": "string",
+                          "example": "image/jpeg"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "example": 142000
+                        },
+                        "expires_in": {
+                          "type": "integer",
+                          "example": 86400
+                        },
+                        "claim_token": {
+                          "type": "string",
+                          "description": "Exchange at POST /v1/claim to keep the image permanently in a signed-in account. Valid for 24 hours."
+                        },
+                        "claim_expires_in": {
+                          "type": "integer",
+                          "example": 86400
+                        },
+                        "generation": {
+                          "type": "object",
+                          "properties": {
+                            "model": {
+                              "type": "string",
+                              "example": "flux-1-schnell"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, or the prompt was refused (validation_error, prompt_rejected)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Human check failed (human_check_failed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Daily free limit or global capacity reached (free_limit_reached, free_capacity_reached), or rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Generation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Generation unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Generation timed out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/playground/upload": {
       "post": {
         "operationId": "playground_upload",
@@ -3113,7 +3422,7 @@
           {
             "name": "tile",
             "in": "query",
-            "description": "Watermark: the filename of another RASTER image (png/jpg/webp/avif) in the SAME project (e.g. img_logo.png — optionally folder-prefixed), tiled edge-to-edge at its native size over the base. Bake opacity into the source PNG. Must be your own uploaded raster image — not an external URL and not SVG. A missing filename is ignored (the base is served).",
+            "description": "Watermark: the CDN path of another RASTER image (png/jpg/webp/avif) in the SAME project: its image_id.ext (e.g. img_logo.png), prefixed with its folder if it has one — not the original upload filename. Tiled edge-to-edge at its native size over the base. Bake opacity into the source PNG. Must be your own uploaded raster image — not an external URL and not SVG. A missing or unknown path is ignored (the base is served).",
             "schema": {
               "type": "string"
             },
