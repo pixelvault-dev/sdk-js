@@ -828,6 +828,8 @@ export interface operations {
                 per_page?: number;
                 /** @description Only images in this collection. */
                 collection_id?: string;
+                /** @description Full-text search over the AI description (alt text, caption, OCR text) of images uploaded with `describe=true`, best match first (words are ANDed; quote phrases, `-word` excludes). Max 200 characters. Combines (AND) with `metadata` and `collection_id`. Images that were never described are not matched. */
+                q?: string;
                 /** @description JSON object; returns images whose custom metadata contains every key/value pair (e.g. `{"env":"prod"}`). Typed values match exactly; nested objects match by containment. Conflicting duplicates (the same key with different values across `metadata` and `meta[key]`) return 400. */
                 metadata?: string;
                 /** @description Shorthand string match on one metadata key, e.g. `?meta[env]=prod`. Use it once per key, for several different keys; combines (AND) with `metadata`. */

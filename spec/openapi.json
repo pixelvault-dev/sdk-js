@@ -734,6 +734,15 @@
             }
           },
           {
+            "name": "q",
+            "in": "query",
+            "description": "Full-text search over the AI description (alt text, caption, OCR text) of images uploaded with `describe=true`, best match first (words are ANDed; quote phrases, `-word` excludes). Max 200 characters. Combines (AND) with `metadata` and `collection_id`. Images that were never described are not matched.",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
             "name": "metadata",
             "in": "query",
             "description": "JSON object; returns images whose custom metadata contains every key/value pair (e.g. `{\"env\":\"prod\"}`). Typed values match exactly; nested objects match by containment. Conflicting duplicates (the same key with different values across `metadata` and `meta[key]`) return 400.",
