@@ -1,6 +1,6 @@
 {
   "name": "@pixelvault-dev/sdk",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Official JavaScript/TypeScript SDK for PixelVault — agent-first media hosting",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -22,7 +22,7 @@
     "lint": "tsc --noEmit",
     "test": "vitest run"
   },
-  "keywords": ["pixelvault", "media-hosting", "image-hosting", "video-hosting", "sdk", "upload", "agent"],
+  "keywords": ["pixelvault", "media-hosting", "image-hosting", "video-hosting", "audio-hosting", "sdk", "upload", "agent"],
   "repository": { "type": "git", "url": "git+https://github.com/pixelvault-dev/sdk-js.git" },
   "homepage": "https://pixelvault.dev/docs",
   "author": "PixelVault",

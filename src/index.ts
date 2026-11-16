@@ -1,5 +1,6 @@
 export { PixelVault, PixelVaultError } from "./client.js";
 export { VideosResource } from "./videos.js";
+export { AudioResource } from "./audio.js";
 export { ExportsResource } from "./exports.js";
 export type {
   ApiKey,
@@ -43,6 +44,22 @@ export type {
   VideoWaitOptions,
   VideoWaitResult,
 } from "./videos.js";
+export type {
+  Audio,
+  AudioCodec,
+  AudioContainer,
+  AudioContentType,
+  AudioFileInput,
+  AudioLifecycleOptions,
+  AudioListMeta,
+  AudioListParams,
+  AudioSignedUrl,
+  AudioUploadOptions,
+  AudioVisibility,
+  ImportAudioInput,
+  UpdateAudioInput,
+  UploadAudioFileInput,
+} from "./audio.js";
 export type {
   ExportJob,
   ExportStart,

@@ -545,6 +545,117 @@ describe("videos", () => {
   });
 });
 
+const AUDIO = {
+  id: "aud_1",
+  kind: "audio",
+  url: "https://img.pixelvault.dev/p/aud_1.mp3",
+  original_url: "https://img.pixelvault.dev/p/aud_1.mp3",
+  visibility: "public",
+  mime_type: "audio/mpeg",
+  size: 3,
+  container: "mp3",
+  codec: "mp3",
+  duration_seconds: 1.25,
+  sample_rate: 44_100,
+  channels: 2,
+  filename: "clip.mp3",
+  folder: null,
+  collection_id: null,
+  metadata: null,
+  created_at: "2026-11-16T00:00:00Z",
+};
+
+describe("audio", () => {
+  it("uploads original bytes with lifecycle and retry-safety headers", async () => {
+    const f = vi.fn(async () => json({ data: AUDIO }, 201));
+    const audio = await client(f as unknown as typeof fetch).audio.upload({
+      file: new Uint8Array([1, 2, 3]),
+      filename: "hello world.ogg",
+      visibility: "private",
+      signExpiresIn: 300,
+      expiresIn: 3600,
+      folder: "episodes",
+      collectionId: "col_1",
+      metadata: { season: 1 },
+      idempotencyKey: "audio-retry-1",
+      sha256: "abc123",
+    });
+    expect(audio.id).toBe("aud_1");
+    const [url, init] = f.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.pathname).toBe("/v1/audio");
+    expect(init.body).toBeInstanceOf(Blob);
+    expect(init.headers).toMatchObject({
+      "Content-Type": "audio/ogg",
+      "X-PixelVault-Filename": "hello%20world.ogg",
+      "X-PixelVault-Visibility": "private",
+      "X-PixelVault-Sign-Expires-In": "300",
+      "X-PixelVault-Expires-In": "3600",
+      "X-PixelVault-Folder": "episodes",
+      "X-PixelVault-Collection-Id": "col_1",
+      "X-PixelVault-Metadata": "{\"season\":1}",
+      "Idempotency-Key": "audio-retry-1",
+      "X-PixelVault-Content-SHA256": "abc123",
+    });
+  });
+
+  it("imports, filters, updates, signs, and deletes audio", async () => {
+    const f = vi.fn(async (url: URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (url.pathname === "/v1/audio" && init?.method === "GET") {
+        return json({ data: [AUDIO], meta: { total: 1, page: 1, per_page: 20 } });
+      }
+      if (url.pathname.endsWith("/sign-url")) {
+        return json({ data: { url: "https://signed.example/audio.mp3?sig=x", expires: 123, visibility: "private" } });
+      }
+      return json({ data: AUDIO }, init?.method === "POST" ? 201 : 200);
+    });
+    const pv = client(f as unknown as typeof fetch);
+    await pv.audio.upload({
+      url: "https://example.com/clip.mp3",
+      filename: "clip.mp3",
+      idempotencyKey: "import-audio-1",
+      metadata: { source: "demo" },
+    });
+    await pv.audio.get("aud/1");
+    await pv.audio.list({ folder: "episodes", collectionId: "col_1", metadata: { season: 1 } });
+    await pv.audio.update("aud_1", { metadata: null, folder: "archive", collectionId: null });
+    const signed = await pv.audio.signUrl("aud_1", { expiresIn: 300 });
+    await pv.audio.delete("aud_1");
+
+    expect(JSON.parse((f.mock.calls[0] as unknown as [URL, RequestInit])[1].body as string)).toMatchObject({
+      url: "https://example.com/clip.mp3",
+      filename: "clip.mp3",
+      metadata: { source: "demo" },
+    });
+    expect((f.mock.calls[1] as unknown as [URL])[0].pathname).toBe("/v1/audio/aud%2F1");
+    expect((f.mock.calls[2] as unknown as [URL])[0].search).toContain("metadata=%7B%22season%22%3A1%7D");
+    expect(JSON.parse((f.mock.calls[3] as unknown as [URL, RequestInit])[1].body as string)).toEqual({
+      metadata: null,
+      folder: "archive",
+      collection_id: null,
+    });
+    expect(signed).toMatchObject({ url: "https://signed.example/audio.mp3?sig=x", expires: 123 });
+  });
+
+  it("rejects a direct upload whose content type cannot be inferred", async () => {
+    const f = vi.fn();
+    await expect(client(f as unknown as typeof fetch).audio.upload({
+      file: new Uint8Array([1, 2, 3]),
+      filename: "clip.bin",
+    })).rejects.toThrow("MP3, WAV, M4A, or OGG");
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct audio above the approved global ceiling before fetching", async () => {
+    const f = vi.fn();
+    await expect(client(f as unknown as typeof fetch).audio.upload({
+      file: new Uint8Array(25_000_001),
+      filename: "clip.mp3",
+    })).rejects.toThrow("25,000,000 bytes");
+    expect(f).not.toHaveBeenCalled();
+  });
+});
+
 describe("exports", () => {
   it("starts, waits for, and downloads media exports as bytes", async () => {
     const f = vi
@@ -554,7 +665,8 @@ describe("exports", () => {
         status: "pending",
         image_count: 2,
         video_count: 1,
-        asset_count: 3,
+        audio_count: 1,
+        asset_count: 4,
         status_url: "/v1/export-jobs/exp_1",
       }, 202))
       .mockResolvedValueOnce(json({
@@ -562,8 +674,9 @@ describe("exports", () => {
         status: "complete",
         image_count: 2,
         video_count: 1,
-        asset_count: 3,
-        processed_count: 3,
+        audio_count: 1,
+        asset_count: 4,
+        processed_count: 4,
         bytes: 4,
         created_at: "2026-11-16T00:00:00Z",
         expires_at: "2026-11-17T00:00:00Z",
@@ -577,6 +690,7 @@ describe("exports", () => {
     const waited = await pv.exports.wait(started.job_id, { timeoutMs: 0 });
     const archive = await pv.exports.download(started.job_id);
     expect(started.video_count).toBe(1);
+    expect(started.audio_count).toBe(1);
     expect(waited).toMatchObject({ timedOut: false, job: { status: "complete" } });
     expect(Array.from(new Uint8Array(archive))).toEqual([1, 2, 3, 4]);
     expect((f.mock.calls[2] as unknown as [URL, RequestInit])[1].headers).toMatchObject({
