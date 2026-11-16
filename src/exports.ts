@@ -5,6 +5,7 @@ export interface ExportStart {
   status: string;
   image_count: number;
   video_count: number;
+  audio_count: number;
   asset_count: number;
   status_url: string;
 }
@@ -14,6 +15,7 @@ export interface ExportJob {
   status: "pending" | "processing" | "complete" | "failed" | "expired";
   image_count: number;
   video_count: number;
+  audio_count: number;
   asset_count: number;
   processed_count: number;
   bytes: number;
@@ -53,7 +55,7 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export class ExportsResource {
   constructor(private readonly cfg: HttpConfig) {}
 
-  /** Export every non-expired image/video and available derivatives with manifest relationships. */
+  /** Export every non-expired image, video, audio original, and available derivative with manifest relationships. */
   async start(opts: { projectId?: string; signal?: AbortSignal } = {}): Promise<ExportStart> {
     return request<ExportStart>(this.cfg, {
       method: "POST",

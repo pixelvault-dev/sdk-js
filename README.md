@@ -37,6 +37,18 @@ await pv.videos.enrich(video.id);
 const result = await pv.videos.waitForEnrichment(video.id, { timeoutMs: 10 * 60_000 });
 console.log(result.video.original_url);
 console.log(result.video.enrichment.transcript, result.video.enrichment.storyboard);
+
+// Host original audio bytes; actual container/codec bytes are validated
+const audio = await pv.audio.upload({
+  file: audioBytes,
+  filename: "episode.m4a",
+  visibility: "private",
+  signExpiresIn: 3600,
+  expiresIn: 604800,
+  idempotencyKey: crypto.randomUUID(),
+});
+console.log(audio.id, audio.url, audio.codec, audio.duration_seconds);
+const fresh = await pv.audio.signUrl(audio.id, { expiresIn: 3600 });
 ```
 
 `apiKey` falls back to the `PIXELVAULT_API_KEY` environment variable. With no key at all, `images.upload({ file })`
@@ -62,15 +74,21 @@ makes an anonymous upload that expires after 30 days.
 | `pv.videos.signUrl(id, { expiresIn? })` | Fresh private original, poster and available artifact URLs |
 | `pv.videos.optimize(id)` / `.enrich(id)` | Start asynchronous social optimization or transcript/storyboard enrichment |
 | `pv.videos.waitForOptimization(id, ...)` / `.waitForEnrichment(id, ...)` | Bounded polling with backoff; returns `{ video, status, timedOut }` and never cancels the server job |
+| `pv.audio.upload({ file \| url, ... })` | Host original MP3, PCM/float WAV, AAC M4A, or Opus/Vorbis OGG with privacy, TTL, metadata, organization, and retry safety |
+| `pv.audio.get(id)` / `.list(...)` / `.listAll(...)` / `.delete(id)` | Audio discovery and lifecycle by stable `aud_` ID |
+| `pv.audio.update(id, { metadata?, folder?, collectionId? })` / `.signUrl(id, ...)` | Replace organization fields or mint a fresh private original URL |
 | `pv.exports.start()` / `.wait(jobId)` / `.download(jobId)` | Owner-authenticated tar export of non-expired images, videos, available derivatives and `manifest.json` relationships |
 | `pv.usage.get()` | Plan, usage, limits and what is left this month (including generation credits) |
 | `pv.keys.list()` / `.create({ label?, environment? })` / `.revoke(id)` | Manage your API keys (secret keys only) |
 | `pv.register({ email })` | Create an account, returns a first key once |
 | `pv.deviceLoginStart({ email })` + `pv.deviceLoginComplete({ email, code })` | Passwordless key minting |
 
-Every call accepts an optional `signal` (`AbortSignal`). Video waits are bounded locally; `timedOut: true` means
-polling stopped, not that the server job was cancelled. Image URLs support on-the-fly transforms through query
-parameters (`?w=800&fmt=auto`), see the [docs](https://pixelvault.dev/docs).
+Every call accepts an optional `signal` (`AbortSignal`). Audio originals have an approved global maximum of
+25,000,000 bytes; this is not a plan allowance. The API validates actual bytes and preserves the original without
+transcoding. Audio editing, conversion, streaming manifests, and transcription are intentionally unsupported.
+Video waits are bounded locally; `timedOut: true` means polling stopped, not that the server job was cancelled.
+Image URLs support on-the-fly transforms through query parameters (`?w=800&fmt=auto`), see the
+[docs](https://pixelvault.dev/docs).
 
 ## Errors and retries
 
@@ -88,9 +106,10 @@ try {
 ```
 
 The client retries `429` (honoring `Retry-After` up to 30 seconds) and, for `GET`/`DELETE` only, `5xx` and network
-errors. Uploads, job creation and `images.generate` are never retried after a `5xx` or network error. Use an
-`idempotencyKey` for replay-safe video direct/import/resumable uploads; replaying the same key with conflicting
-inputs fails. Tune with `maxRetries` (default 2) and `timeoutMs` (default 60000).
+errors. Uploads, job creation and `images.generate` are never retried after a `5xx` or network error.
+An `idempotencyKey` makes audio and video direct/import uploads replay-safe (video resumable uploads too);
+replaying the same key with conflicting inputs fails. Tune with `maxRetries` (default 2) and `timeoutMs`
+(default 60000).
 
 ## Types
 

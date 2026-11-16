@@ -562,6 +562,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List audio assets */
+        get: operations["list_audio"];
+        put?: never;
+        /**
+         * Upload or securely import original audio
+         * @description Hosts original MP3, WAV, M4A, or OGG bytes without transcoding, up to the approved global 25,000,000-byte original-file ceiling. This ceiling is not a reserved capacity or plan allowance. PixelVault validates the actual container and accepts MPEG Layer III, PCM/IEEE-float WAV, AAC-in-M4A, and Opus/Vorbis-in-Ogg combinations. Direct uploads require Content-Length and use X-PixelVault-Filename, X-PixelVault-Visibility, X-PixelVault-Expires-In, X-PixelVault-Folder, X-PixelVault-Collection-Id, and X-PixelVault-Metadata headers. URL imports use the equivalent JSON fields and the existing SSRF-safe importer. Idempotency-Key is project- and audio-endpoint-scoped for 24 hours; direct retries also require X-PixelVault-Content-SHA256. A misconfigured deployment returns 503 audio_policy_pending rather than accepting an unbounded upload.
+         */
+        post: operations["upload_audio"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audio/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get audio metadata and an access URL */
+        get: operations["get_audio"];
+        put?: never;
+        post?: never;
+        /** Delete original audio and its metadata */
+        delete: operations["delete_audio"];
+        options?: never;
+        head?: never;
+        /** Replace audio organization fields */
+        patch: operations["update_audio"];
+        trace?: never;
+    };
+    "/v1/audio/{id}/sign-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mint a fresh audio bearer URL */
+        post: operations["sign_audio_url"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/videos": {
         parameters: {
             query?: never;
@@ -1212,6 +1271,58 @@ export interface components {
             enrichment: components["schemas"]["VideoEnrichment"];
             /** @description Unix timestamp shared by every URL in this response. */
             expires: number;
+        };
+        Audio: {
+            /** @example aud_a1b2c3d4e5f6 */
+            id: string;
+            /** @constant */
+            kind: "audio";
+            /** Format: uri */
+            url: string;
+            /**
+             * Format: uri
+             * @description The original uploaded bytes; PixelVault does not transcode audio.
+             */
+            original_url: string;
+            /** @enum {string} */
+            visibility: "public" | "private";
+            /** @enum {string} */
+            mime_type: "audio/mpeg" | "audio/wav" | "audio/mp4" | "audio/ogg";
+            size: number;
+            /** @enum {string|null} */
+            container: "mp3" | "wav" | "m4a" | "ogg" | null;
+            /** @enum {string|null} */
+            codec: "mp3" | "pcm" | "pcm_float" | "aac" | "opus" | "vorbis" | null;
+            duration_seconds: number | null;
+            sample_rate: number | null;
+            channels: number | null;
+            /** @example agent-response.ogg */
+            filename: string;
+            folder: string | null;
+            collection_id: string | null;
+            metadata: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description Deletion time for a temporary audio asset. Signed-URL expiry is separate.
+             */
+            expires_at?: string;
+            temporary?: boolean;
+            /** @description Present and true when an idempotent retry returns the committed asset. */
+            replayed?: boolean;
+            /** @description Unix timestamp when the private bearer URL expires. */
+            signed_expires?: number;
+        };
+        AudioSignedUrl: {
+            /** Format: uri */
+            url: string;
+            /** @description Unix timestamp when the bearer URL expires. */
+            expires: number;
+            /** @enum {string} */
+            visibility: "public" | "private";
         };
         VideoEnrichmentWebhookArtifact: {
             /** @enum {string} */
@@ -3358,7 +3469,9 @@ export interface operations {
                         image_count?: number;
                         /** @example 4 */
                         video_count?: number;
-                        /** @example 132 */
+                        /** @example 2 */
+                        audio_count?: number;
+                        /** @example 134 */
                         asset_count?: number;
                         /** @example /v1/export-jobs/exp_a1b2c3d4e5f6 */
                         status_url?: string;
@@ -3440,6 +3553,7 @@ export interface operations {
                         status?: "pending" | "processing" | "complete" | "failed" | "expired";
                         image_count?: number;
                         video_count?: number;
+                        audio_count?: number;
                         asset_count?: number;
                         processed_count?: number;
                         bytes?: number;
@@ -3646,6 +3760,286 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Error"];
                 };
+            };
+        };
+    };
+    list_audio: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+                folder?: string;
+                collection_id?: string;
+                /** @description JSON containment filter; repeated metadata.key=value query parameters are also supported. */
+                metadata?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated audio assets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Audio"][];
+                        meta: {
+                            total: number;
+                            page: number;
+                            per_page: number;
+                        };
+                    };
+                };
+            };
+        };
+    };
+    upload_audio: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string;
+                /** @description Required with Idempotency-Key for a direct byte upload. */
+                "X-PixelVault-Content-SHA256"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "audio/mpeg": string;
+                "audio/wav": string;
+                "audio/mp4": string;
+                "audio/ogg": string;
+                "application/json": {
+                    /** Format: uri */
+                    url: string;
+                    filename?: string;
+                    /** @enum {string} */
+                    visibility?: "public" | "private";
+                    sign_expires_in?: number;
+                    expires_in?: number;
+                    folder?: string | null;
+                    collection_id?: string | null;
+                    metadata?: {
+                        [key: string]: unknown;
+                    } | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Committed idempotent upload replayed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Audio"];
+                    };
+                };
+            };
+            /** @description Audio hosted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Audio"];
+                    };
+                };
+            };
+            /** @description Invalid bytes, container/codec combination, lifecycle input, checksum, or conflicting declaration */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Storage, upload, or private-media quota reached */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Idempotency key conflict or upload still in progress */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Configured original-file or Worker request limit exceeded */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unsupported audio type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Audio creation is gated until its maximum file-size policy is configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_audio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audio asset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Audio"];
+                    };
+                };
+            };
+            /** @description Audio asset not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_audio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Audio asset not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_audio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    metadata?: {
+                        [key: string]: unknown;
+                    } | null;
+                    folder?: string | null;
+                    collection_id?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated audio asset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Audio"];
+                    };
+                };
+            };
+            /** @description Audio asset or collection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Collection visibility does not match the asset */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sign_audio_url: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @default 3600 */
+                    expires_in?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Fresh signed URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudioSignedUrl"];
+                    };
+                };
+            };
+            /** @description Audio asset not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
