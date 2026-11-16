@@ -521,3 +521,43 @@ describe("videos", () => {
     });
   });
 });
+
+describe("exports", () => {
+  it("starts, waits for, and downloads media exports as bytes", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({
+        job_id: "exp_1",
+        status: "pending",
+        image_count: 2,
+        video_count: 1,
+        asset_count: 3,
+        status_url: "/v1/export-jobs/exp_1",
+      }, 202))
+      .mockResolvedValueOnce(json({
+        id: "exp_1",
+        status: "complete",
+        image_count: 2,
+        video_count: 1,
+        asset_count: 3,
+        processed_count: 3,
+        bytes: 4,
+        created_at: "2026-11-16T00:00:00Z",
+        expires_at: "2026-11-17T00:00:00Z",
+        download_url: "/v1/export-jobs/exp_1/download",
+      }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3, 4]), {
+        headers: { "content-type": "application/x-tar" },
+      }));
+    const pv = client(f as unknown as typeof fetch);
+    const started = await pv.exports.start();
+    const waited = await pv.exports.wait(started.job_id, { timeoutMs: 0 });
+    const archive = await pv.exports.download(started.job_id);
+    expect(started.video_count).toBe(1);
+    expect(waited).toMatchObject({ timedOut: false, job: { status: "complete" } });
+    expect(Array.from(new Uint8Array(archive))).toEqual([1, 2, 3, 4]);
+    expect((f.mock.calls[2] as unknown as [URL, RequestInit])[1].headers).toMatchObject({
+      Accept: "application/x-tar",
+    });
+  });
+});

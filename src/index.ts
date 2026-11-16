@@ -1,5 +1,6 @@
 export { PixelVault, PixelVaultError } from "./client.js";
 export { VideosResource } from "./videos.js";
+export { ExportsResource } from "./exports.js";
 export type {
   ApiKey,
   BatchResult,
@@ -41,3 +42,9 @@ export type {
   VideoWaitOptions,
   VideoWaitResult,
 } from "./videos.js";
+export type {
+  ExportJob,
+  ExportStart,
+  ExportWaitOptions,
+  ExportWaitResult,
+} from "./exports.js";

@@ -1,6 +1,7 @@
 import { PixelVaultError } from "./errors.js";
 import { request, type HttpConfig } from "./http.js";
 import { VideosResource } from "./videos.js";
+import { ExportsResource } from "./exports.js";
 import type { components, operations } from "./generated/schema.js";
 
 export type Image = components["schemas"]["Image"];
@@ -160,6 +161,7 @@ export class PixelVault {
 
   readonly images: ImagesResource;
   readonly videos: VideosResource;
+  readonly exports: ExportsResource;
   readonly usage: UsageResource;
   readonly keys: KeysResource;
 
@@ -173,6 +175,7 @@ export class PixelVault {
     };
     this.images = new ImagesResource(this.cfg);
     this.videos = new VideosResource(this.cfg);
+    this.exports = new ExportsResource(this.cfg);
     this.usage = new UsageResource(this.cfg);
     this.keys = new KeysResource(this.cfg);
   }

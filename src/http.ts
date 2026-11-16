@@ -19,6 +19,7 @@ export interface RequestOptions {
   form?: FormData;
   body?: BodyInit;
   headers?: Record<string, string>;
+  responseType?: "json" | "arrayBuffer";
   /** Skip the Authorization header (register, device login). */
   noAuth?: boolean;
   /** Per-call abort signal. */
@@ -108,6 +109,7 @@ export async function request<T>(
 
     if (res.ok) {
       if (res.status === 204) return undefined as T;
+      if (opts.responseType === "arrayBuffer") return (await res.arrayBuffer()) as T;
       return (await res.json()) as T;
     }
 

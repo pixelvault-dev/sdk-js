@@ -62,6 +62,7 @@ makes an anonymous upload that expires after 30 days.
 | `pv.videos.signUrl(id, { expiresIn? })` | Fresh private original, poster and available artifact URLs |
 | `pv.videos.optimize(id)` / `.enrich(id)` | Start asynchronous social optimization or transcript/storyboard enrichment |
 | `pv.videos.waitForOptimization(id, ...)` / `.waitForEnrichment(id, ...)` | Bounded polling with backoff; returns `{ video, status, timedOut }` and never cancels the server job |
+| `pv.exports.start()` / `.wait(jobId)` / `.download(jobId)` | Owner-authenticated tar export of non-expired images, videos, available derivatives and `manifest.json` relationships |
 | `pv.usage.get()` | Plan, usage, limits and what is left this month (including generation credits) |
 | `pv.keys.list()` / `.create({ label?, environment? })` / `.revoke(id)` | Manage your API keys (secret keys only) |
 | `pv.register({ email })` | Create an account, returns a first key once |
