@@ -110,6 +110,14 @@ export interface VideoWaitResult {
   timedOut: boolean;
 }
 
+export interface VideoSignedUrls {
+  url: string;
+  poster_url?: string;
+  social_url?: string;
+  enrichment: Video["enrichment"];
+  expires: number;
+}
+
 function toBlob(file: VideoFileInput, filename?: string): { blob: Blob; filename: string } {
   if (file instanceof Blob) {
     const named = file as Blob & { name?: string };
@@ -358,8 +366,8 @@ export class VideosResource {
   async signUrl(
     id: string,
     opts: { expiresIn?: number; signal?: AbortSignal } = {},
-  ): Promise<Video> {
-    const response = await request<{ data: Video }>(this.cfg, {
+  ): Promise<VideoSignedUrls> {
+    const response = await request<{ data: VideoSignedUrls }>(this.cfg, {
       method: "POST",
       path: `/v1/videos/${encodeURIComponent(id)}/sign-url`,
       json: opts.expiresIn === undefined ? {} : { expires_in: opts.expiresIn },

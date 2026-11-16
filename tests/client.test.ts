@@ -480,13 +480,16 @@ describe("videos", () => {
       if (url.pathname === "/v1/videos" && init?.method === "GET") {
         return json({ data: [VIDEO], meta: { total: 1, page: 1, per_page: 20 } });
       }
+      if (url.pathname.endsWith("/sign-url")) {
+        return json({ data: { url: "https://signed.example/video.mp4?sig=x", enrichment: VIDEO.enrichment, expires: 123 } });
+      }
       return json({ data: VIDEO });
     });
     const pv = client(f as unknown as typeof fetch);
     await pv.videos.get("vid/1");
     await pv.videos.list({ folder: "demos", collectionId: "col_1", metadata: { env: "test" } });
     await pv.videos.update("vid_1", { metadata: null, folder: "archive", collectionId: null });
-    await pv.videos.signUrl("vid_1", { expiresIn: 300 });
+    const signed = await pv.videos.signUrl("vid_1", { expiresIn: 300 });
     await pv.videos.optimize("vid_1");
     await pv.videos.enrich("vid_1");
     await pv.videos.analyze("vid_1");
@@ -501,6 +504,7 @@ describe("videos", () => {
       collection_id: null,
     });
     expect(JSON.parse((f.mock.calls[3] as unknown as [URL, RequestInit])[1].body as string)).toEqual({ expires_in: 300 });
+    expect(signed).toMatchObject({ url: "https://signed.example/video.mp4?sig=x", expires: 123 });
     expect((f.mock.calls[5] as unknown as [URL])[0].pathname).toBe("/v1/videos/vid_1/enrich");
   });
 

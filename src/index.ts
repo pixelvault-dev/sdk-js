@@ -38,6 +38,7 @@ export type {
   VideoUploadedPart,
   VideoUploadOptions,
   VideoUploadSession,
+  VideoSignedUrls,
   VideoVisibility,
   VideoWaitOptions,
   VideoWaitResult,
