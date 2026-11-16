@@ -78,10 +78,50 @@ export interface paths {
         get: operations["list_images"];
         put?: never;
         /**
-         * Upload an image
-         * @description Upload an image and receive a public CDN URL (JPEG, PNG, GIF, WebP, AVIF, SVG). Works WITHOUT an API key: keyless uploads are temporary (response includes `temporary: true` and `expires_in`, ~30 days) — add a Bearer key to make uploads permanent. Send multipart/form-data (a file), or, with a key, application/json `{ url }` to import from a URL (https only). Retry-safe: send an `Idempotency-Key` header and a retry after a timeout returns the original image instead of storing a second copy; add `dedupe=true` to reuse an existing image with identical bytes. `width` and `height` are returned for every format whose header carries them.
+         * Upload an image or PDF
+         * @description Upload a file and receive a public CDN URL (JPEG, PNG, GIF, WebP, AVIF, SVG, PDF). PDFs are opaque, download-only documents: they are served with `Content-Disposition: attachment`, `X-Robots-Tag: noindex`, and reject image transforms. Works WITHOUT an API key: keyless uploads are temporary (response includes `temporary: true` and `expires_in`, ~30 days) — add a Bearer key to make uploads permanent. Send multipart/form-data (a file), or, with a key, application/json `{ url }` to import from an https URL. Retry-safe: send an `Idempotency-Key` header and a retry after a timeout returns the original upload instead of storing a second copy; add `dedupe=true` to reuse an existing upload with identical bytes. `width` and `height` are returned only for image formats whose header carries them.
          */
         post: operations["upload_image"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/images/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the project's AI tags with counts
+         * @description The AI tags on the project's described images with how many images carry each, most used first (at most 40). Filter the image list with GET /v1/images?tag=.
+         */
+        get: operations["list_image_tags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/images/{id}/describe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start an AI description for an existing image
+         * @description Start the AI description (alt text, caption, OCR text, tags) of a stored image, for images uploaded without `describe=true`. Needs a secret key. Idempotent: an image that is already described, or being described, returns its current state and uses none of the allowance. A failed or stalled description is started again (and uses one unit). A description takes a few seconds: poll GET /v1/images/{id} until `description.status` is `done` (do not poll this endpoint). Uses the account's description allowance (free: 20 for life; Starter: 1,000 a month; Pro: 10,000 a month); when it is used up, `describe_skipped` is `quota`. An unknown id or another project's image returns 404.
+         */
+        post: operations["describe_image"];
         delete?: never;
         options?: never;
         head?: never;
@@ -136,6 +176,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/images/{id}/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Edit an image with a natural-language instruction
+         * @description Create a new hosted image by editing an existing image you own; the source is never overwritten. Uses Cloudflare FLUX.2 with zero data retention. Fast edits cost 1 monthly edit credit and work on every plan (Free 5, Starter 100, Pro 500); quality edits cost 5 and require a paid plan. Credits reset on the 1st (UTC) and are refunded if model inference or storage fails. JPEG, PNG, WebP, AVIF and GIF sources up to 20 MB are accepted. Output visibility defaults to the source visibility. The new image also counts toward upload and storage quotas. Accepts either a secret API key or the signed-in dashboard session; the account must have a verified email.
+         */
+        post: operations["edit_image"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/images/batch": {
         parameters: {
             query?: never;
@@ -165,7 +225,7 @@ export interface paths {
         };
         /**
          * Get plan, limits and usage
-         * @description Plan, limits and current usage for the calling key's project, so an agent can check quota before uploading. Storage is the cumulative total (what the cap enforces); uploads are the current UTC month and reset at `resets_at`. Bandwidth usage is not reported (the CDN owns those counters); the bandwidth limit is. Requires a secret key.
+         * @description Plan, limits and current usage for the calling key's project, so an agent can check quota before uploading. Storage is the cumulative total (what the cap enforces); uploads are the current UTC month and reset at `resets_at`. Bandwidth and unique-transform usage are owned by the CDN and are not reported here; their monthly limits are. Requires a secret key.
          */
         get: operations["get_usage"];
         put?: never;
@@ -215,6 +275,88 @@ export interface paths {
          * @description Permanently revoke a secret key on the project (publishable keys are managed from the dashboard and return 404). The key authenticating the request cannot revoke itself (409 `cannot_revoke_current_key`). The delete only applies while the calling key still exists, so two keys revoking each other concurrently cannot leave the project without a key; the loser gets 409 `conflict`. Limited to 20 key changes per hour per project. Requires a secret key.
          */
         delete: operations["revoke_key"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List webhook endpoints
+         * @description List the current project's signed webhook endpoints and plan limit. Requires a secret API key or dashboard session.
+         */
+        get: operations["list_webhooks"];
+        put?: never;
+        /**
+         * Create a webhook endpoint
+         * @description Create a public-HTTPS endpoint for consumer-actionable media lifecycle events: create/delete, AI description completion/failure, export completion/failure, video optimization completion/failure, and video enrichment completion/failure. Synchronous generation and editing failures stay in their API responses; their successful outputs emit `media.created` with `source` `generation` or `edit`. Returns `signing_secret` once. Starter supports 3 endpoints; Pro supports 10; Free receives 402. Delivery is at least once: deduplicate on the stable event `id`; repeated delivery attempts retain that id, while a retried enrichment job has a new `job_id`. PixelVault retries non-2xx/network failures after approximately 1m, 5m, 30m, and 2h. Polling `GET /v1/videos/{id}` remains supported. Private artifact URLs in callbacks expire; call the payload's `refresh_url` to mint a fresh set.
+         */
+        post: operations["create_webhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhooks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a webhook endpoint and its delivery log */
+        delete: operations["delete_webhook"];
+        options?: never;
+        head?: never;
+        /** Update a webhook endpoint */
+        patch: operations["update_webhook"];
+        trace?: never;
+    };
+    "/v1/webhooks/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate a webhook signing secret
+         * @description Immediately invalidates the previous signing secret and returns the replacement once.
+         */
+        post: operations["rotate_webhook_secret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhooks/{id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inspect recent webhook deliveries
+         * @description Newest-first delivery attempts retained for 30 days. Response bodies are never stored.
+         */
+        get: operations["list_webhook_deliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -307,7 +449,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a collection and its images */
+        /**
+         * Get a collection and its media
+         * @description Returns assets for every member, plus the backward-compatible images subset. Private asset URLs are unsigned identifiers; use the media type's sign-url endpoint.
+         */
         get: operations["get_collection"];
         put?: never;
         post?: never;
@@ -328,7 +473,7 @@ export interface paths {
         put?: never;
         /**
          * Close a collection
-         * @description Mark a collection closed (e.g. on PR merge) and make its images eligible for the reap sweep now, ahead of their TTL.
+         * @description Marks a collection closed and makes all member media eligible for lifecycle cleanup ahead of their TTL.
          */
         post: operations["close_collection"];
         delete?: never;
@@ -347,8 +492,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Start a bulk export
-         * @description Start an asynchronous export of every image in the project into a downloadable tar archive (plus a manifest.json of id, filename, storage key, URL, and metadata per image). Your data is always portable — no lock-in. Returns a job; poll status_url until complete, then download. Auth is project-scoped: pass a secret key to export that key's project, or a dashboard token together with a project_id query parameter.
+         * Start a media export
+         * @description Starts an asynchronous tar export of every non-expired image and video in the project. manifest.json keeps the v1 images array and adds video originals, custom metadata, collection/folder membership, job state, and parent relationships for existing posters, optimized copies, transcripts, and storyboards. Private bytes are included under owner-authenticated download, but the manifest never stores permanent or stale signed URLs. Pending and failed jobs are recorded without invented artifact paths. Deleted assets are absent at snapshot time; an asset deleted during assembly remains in the manifest but its missing bytes are skipped. Poll status_url until complete.
          */
         post: operations["start_export"];
         delete?: never;
@@ -365,8 +510,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get export job status
-         * @description Poll an export job. When status is 'complete', the response includes download_url. Auth is the same as starting an export (secret key, or dashboard token + project_id).
+         * Get media export job status
+         * @description Poll an export job. processed_count counts asset rows, not derived files. When status is complete, the response includes download_url. Auth is the same as starting an export.
          */
         get: operations["get_export_job"];
         put?: never;
@@ -407,11 +552,230 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Claim an anonymous upload into your account
-         * @description Exchange the `claim_token` from POST /v1/playground/upload for a permanent image in your account. Authenticates with a dashboard session token (JWT), NOT an API key — this is the path a web user takes to keep an image they just made, without ever touching a key. Idempotent per project (enforced by a unique index, so concurrent claims cannot store duplicates): re-claiming returns the image already saved. Valid for 24 hours, after which the temporary upload no longer exists.
+         * Claim anonymous media into your account
+         * @description Exchange the `claim_token` from POST /v1/playground/upload or POST /v1/playground/video for permanent media in your account. Authenticates with a dashboard session token (JWT), NOT an API key. Idempotent per project: re-claiming returns the media already saved. Valid for 24 hours, after which the temporary upload no longer exists.
          */
         post: operations["claim_upload"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List hosted videos */
+        get: operations["list_videos"];
+        put?: never;
+        /**
+         * Upload or import an original MP4
+         * @description Hosts original MP4 bytes or securely imports an https URL. Idempotency-Key is scoped to the authenticated project and retained for 24 hours: same inputs replay the original asset (200), conflicting inputs return 422, and an active retry returns 409 without creating another upload. Direct uploads using a key must send X-PixelVault-Content-SHA256; URL imports fingerprint the URL and storage settings. Idempotency is not content deduplication: different keys create distinct assets, never across projects or visibility. expires_in deletes the original, poster, optimized copy, transcript, and storyboard; active jobs are failed and released first. Signed-URL expiry does not delete the asset. The original is always preserved. Raw requests need Content-Length and multipart above 100 MB; URL imports require remote Content-Length.
+         */
+        post: operations["upload_video"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get video metadata */
+        get: operations["get_video"];
+        put?: never;
+        post?: never;
+        /** Delete a video */
+        delete: operations["delete_video"];
+        options?: never;
+        head?: never;
+        /**
+         * Replace video organization fields
+         * @description Updates custom metadata, logical folder, and/or existing collection membership. Omitted fields remain unchanged; null clears. Collection visibility must match the video.
+         */
+        patch: operations["update_video"];
+        trace?: never;
+    };
+    "/v1/videos/{id}/optimize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a social-ready H.264/AAC fast-start MP4
+         * @description Idempotently enqueues the social preset while preserving the original. Returns 202 while pending/processing and 200 when complete or when the original is already compatible. Supports source MP4s up to 100 MB and 60 seconds. Monthly output allowances: Free 2 minutes, Starter 30 minutes, Pro 120 minutes. Poll GET /v1/videos/{id} until social_optimization.status is complete or failed.
+         */
+        post: operations["optimize_video"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos/{id}/enrich": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate a transcript and storyboard
+         * @description Idempotently enqueues transcript text, timed WebVTT, timestamped JSON segments, and bounded storyboard sheets. Returns 202 while pending/processing and 200 when complete. Silent videos skip the transcript but still receive a storyboard. Supports source MP4s from 1 second through 10 minutes and up to 100 MB. Monthly source-minute allowances: Free 2 minutes, Starter 30 minutes, Pro 120 minutes. Poll GET /v1/videos/{id} until enrichment.status is complete or failed.
+         */
+        post: operations["enrich_video"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos/{id}/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Analyze video metadata and social compatibility
+         * @description Reads bounded MP4 container metadata without transcoding. Use this to backfill legacy videos or refresh compatibility fields.
+         */
+        post: operations["analyze_video"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos/{id}/poster": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate or return a video's poster frame
+         * @description Idempotently extracts and stores a 640×360 JPEG frame. Use this to backfill legacy videos or retry a transient transformation failure.
+         */
+        post: operations["generate_video_poster"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos/{id}/sign-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create signed URLs for a video and its derivatives
+         * @description Returns expiry-matched bearer URLs for the original MP4, poster, completed social-ready copy, transcript artifacts, and storyboard sheets when present.
+         */
+        post: operations["sign_video_url"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a multipart MP4 upload
+         * @description Starts a 24-hour multipart session. Idempotency-Key is project-scoped and replays the same active or completed session for 24 hours; conflicting inputs return 422. sha256 is required with a key. This retry contract is separate from content deduplication. Use the returned 10 MiB part_size for equal non-final parts, upload parts sequentially, then complete.
+         */
+        post: operations["create_video_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos/uploads/{uploadId}/parts/{partNumber}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upload the next MP4 part
+         * @description Parts are sequential from 1. Every non-final part must use the session's part_size. For idempotent sessions, send X-PixelVault-Part-SHA256; exact part retries return the stored part with replayed=true, while conflicting bytes return 409.
+         */
+        put: operations["upload_video_part"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos/uploads/{uploadId}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete and validate an MP4 upload */
+        post: operations["complete_video_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/videos/uploads/{uploadId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Abort a multipart upload */
+        delete: operations["abort_video_upload"];
         options?: never;
         head?: never;
         patch?: never;
@@ -424,15 +788,59 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List and search images from a signed-in session
+         * @description The signed-in account's images across all its projects, newest first. Authenticates with a dashboard session token (JWT), NOT an API key — this is what the web dashboard's image list calls to load more and to search. Callers with an API key should use GET /v1/images. `q` is a case-insensitive substring match on the original filename (wildcards are matched literally) OR a full-text match in the image's AI description (alt text, caption, OCR text).
+         */
+        get: operations["dashboard_list_images"];
         put?: never;
         /**
-         * Upload an image from a signed-in session
-         * @description Store one image for the signed-in account. Authenticates with a dashboard session token (JWT), NOT an API key — this is what the web dashboard's uploader calls, so a person who has never been issued a key can still add images. The image lands in the account's default project.
+         * Upload an image or PDF from a signed-in session
+         * @description Store one image or PDF document for the signed-in account. Authenticates with a dashboard session token (JWT), NOT an API key — this is what the web dashboard and converter tools call, so a person who has never been issued a key can still add media. PDFs are served as forced downloads. The upload lands in the account's default project.
          *
          *     Deliberately narrow: one file per request, no folder, visibility, TTL or URL import. Callers that need those should use POST /v1/images with an API key.
          */
         post: operations["dashboard_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/uploads/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the account's AI tags with counts (signed-in session)
+         * @description The AI tags on the signed-in account's described images with how many images carry each, most used first (at most 40). Authenticates with a dashboard session token (JWT), NOT an API key. The dashboard uses it for its tag filter bar; filter the list with GET /v1/uploads?tag=.
+         */
+        get: operations["dashboard_list_tags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/uploads/{id}/describe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start an AI description for an existing image (signed-in session)
+         * @description Start the AI description (alt text, caption, OCR text) of one of the signed-in account's stored images — the dashboard's Describe button. Authenticates with a dashboard session token (JWT), NOT an API key. Idempotent: an image that is already described, or being described, returns its current state and uses none of the allowance. A failed or stalled description is started again (and uses one unit), so do not poll with this: to watch a pending description use the read-only GET /v1/uploads?ids=. A description takes a few seconds. Uses the account's description allowance (free: 20 for life; Starter: 1,000 a month; Pro: 10,000 a month); when it is used up, `describe_skipped` is `quota`. An unknown id or another account's image returns 404.
+         */
+        post: operations["dashboard_describe_image"];
         delete?: never;
         options?: never;
         head?: never;
@@ -489,10 +897,30 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Anonymous upload (no API key)
-         * @description Upload an image without an account or API key and get a temporary public CDN URL. Rate limited to 10 uploads/hour per IP, max 2 MB. Images are removed within 24 hours — use the authenticated upload for permanent hosting.
+         * Anonymous image or PDF upload (no API key)
+         * @description Upload an image or PDF without an account or API key and get a temporary public CDN URL plus a claim token. Rate limited to 10 uploads/hour per IP, max 2 MB. PDFs are always served as download attachments. Uploads are removed within 24 hours — use the authenticated upload for permanent hosting.
          */
         post: operations["playground_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/playground/video": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Anonymous temporary MP4 upload
+         * @description Upload an MP4 without an account or API key and get a temporary public CDN URL plus a claim token. Limited to 25 MB and 3 uploads/hour per IP. Videos are removed within 24 hours unless claimed into a signed-in account.
+         */
+        post: operations["playground_video_upload"];
         delete?: never;
         options?: never;
         head?: never;
@@ -543,6 +971,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Compact AI-description state for the dashboard: `pending` while the vision call runs (a few seconds), `done` with the alt text, or `failed`. Null when the image has none. The full caption and OCR text are returned by GET /v1/images/{id}, not here. */
+        DashboardDescription: {
+            /** @enum {string} */
+            status?: "pending" | "done" | "failed";
+            /** @description Alt text; null unless status is `done`. */
+            alt?: string | null;
+            /** @description Up to 5 short lowercase singular topic tags (e.g. `boat`, `harbour`); descriptions made before 2026-11-12 may carry a sixth and plural forms. Empty unless status is `done`, and for descriptions made before tags existed. Untrusted model output: render as text. */
+            tags?: string[];
+        } | null;
         Error: {
             error?: {
                 code: string;
@@ -553,8 +990,13 @@ export interface components {
             /** @example img_a1b2c3d4e5f6 */
             id?: string;
             /**
+             * @description PDF uploads are `document`; renderable image formats are `image`.
+             * @enum {string}
+             */
+            kind?: "image" | "document";
+            /**
              * Format: uri
-             * @description CDN URL. Supports on-the-fly transforms via query params: size (s|m|l|social), w, h (px, snapped to a discrete set), fit (scale-down|contain|cover|crop|pad), fmt (auto|webp|avif|jpg|png), q (auto|60|75|85), segment (foreground — AI background removal, transparent PNG), background (fill: hex, rgb()/rgba(), or a common CSS color name), gravity (auto|face|left|right|top|bottom|XxY, with fit=cover|crop), zoom (0.0-1.0, with gravity=face), blur (0-250), sharpen (0-10), rotate (90|180|270), flip (h|v|hv), brightness/contrast (multiplier, 1=no change), saturation (multiplier, 0=grayscale), tile (watermark: tile another of your project's images over the base). See the serve_image operation for the full parameter reference. Example: ?w=800&blur=30&saturation=0
+             * @description CDN URL. Images support on-the-fly transforms via query params: size (s|m|l|social), w, h (px, snapped to a discrete set), fit (scale-down|contain|cover|crop|pad), fmt (auto|webp|avif|jpg|png), q (auto|60|75|85), segment (foreground — AI background removal, transparent PNG), background (fill: hex, rgb()/rgba(), or a common CSS color name), gravity (auto|face|left|right|top|bottom|XxY, with fit=cover|crop), zoom (0.0-1.0, with gravity=face), blur (0-250), sharpen (0-10), rotate (90|180|270), flip (h|v|hv), brightness/contrast (multiplier, 1=no change), saturation (multiplier, 0=grayscale), tile (watermark: tile another of your project's images over the base). PDFs reject transform parameters and are always served with `Content-Disposition: attachment`. See the serve_image operation for the full image parameter reference.
              * @example https://img.pixelvault.dev/proj_xyz789/a1b2c3d4e5f6.jpg
              */
             url?: string;
@@ -584,6 +1026,8 @@ export interface components {
                 alt?: string;
                 caption?: string;
                 ocr_text?: string;
+                /** @description Up to 5 short lowercase singular topic tags for grouping and filtering (e.g. `boat`, `harbour`); descriptions made before 2026-11-12 may carry a sixth and plural forms. Absent on descriptions made before tags existed. Untrusted model output: render as text. */
+                tags?: string[];
                 model?: string;
                 /** Format: date-time */
                 described_at?: string;
@@ -607,6 +1051,264 @@ export interface components {
             deduplicated?: boolean;
             /** @description Present (true) when an `Idempotency-Key` repeat returned the original upload's image. */
             replayed?: boolean;
+        };
+        /** @description State of the optional social preset. The original MP4 is never replaced. not_needed means the original already passed H.264/AAC fast-start validation. */
+        VideoSocialOptimization: {
+            /** @constant */
+            preset: "social";
+            /** @enum {string} */
+            status: "not_requested" | "pending" | "processing" | "complete" | "failed" | "not_needed";
+            /** @enum {string} */
+            source?: "original" | "derived";
+            /** Format: uri */
+            url?: string;
+            size?: number | null;
+            duration_seconds?: number | null;
+            video_codec?: string | null;
+            audio_codec?: string | null;
+            fast_start?: boolean | null;
+            /** Format: date-time */
+            requested_at?: string;
+            /** Format: date-time */
+            completed_at?: string | null;
+            error?: {
+                code: string;
+                message: string;
+            };
+        };
+        /** @description State of the optional transcript + storyboard job. Generated artifacts inherit the video's visibility and signed-URL expiry. */
+        VideoEnrichment: {
+            /** @enum {string} */
+            status: "not_requested" | "pending" | "processing" | "complete" | "failed";
+            /**
+             * @description Stable identifier for this enrichment attempt. Repeated requests while queued, running, or complete return the same job ID; retrying a failed job creates a new one.
+             * @example ven_a1b2c3d4e5f6
+             */
+            job_id?: string;
+            /** Format: date-time */
+            requested_at?: string;
+            /** Format: date-time */
+            completed_at?: string | null;
+            transcript?: {
+                /** @enum {string} */
+                status: "complete" | "skipped";
+                /** Format: uri */
+                text_url?: string;
+                /** Format: uri */
+                vtt_url?: string;
+                /** Format: uri */
+                segments_url?: string;
+                language?: string | null;
+                languages?: string[];
+                model?: string | null;
+                segment_count?: number;
+                /** @enum {string} */
+                reason?: "no_audio";
+            };
+            storyboard?: {
+                /** @constant */
+                status?: "complete";
+                /** Format: uri */
+                index_url?: string;
+                frame_count?: number;
+                sheets?: {
+                    /** Format: uri */
+                    url: string;
+                    start_seconds: number;
+                    end_seconds: number;
+                    frame_count: number;
+                }[];
+            } | null;
+            error?: {
+                code: string;
+                message: string;
+            };
+        };
+        Video: {
+            /** @example vid_a1b2c3d4e5f6 */
+            id: string;
+            /** @constant */
+            kind: "video";
+            /**
+             * Format: uri
+             * @example https://img.pixelvault.dev/proj_xyz789/vid_a1b2c3d4e5f6.mp4
+             */
+            url: string;
+            /**
+             * Format: uri
+             * @description The stored original MP4. Equal to url; explicit so one-step social-ready callers can retain both outputs.
+             */
+            original_url: string;
+            /**
+             * Format: uri
+             * @description Completed H.264/AAC fast-start URL. Present only after social optimization completes.
+             */
+            social_ready_url?: string;
+            /**
+             * Format: uri
+             * @description Generated 640×360 JPEG frame. Private videos return an expiry-matched signed poster URL.
+             */
+            poster_url?: string;
+            /** @enum {string} */
+            visibility: "public" | "private";
+            /** @constant */
+            mime_type: "video/mp4";
+            /** @example 24000000 */
+            size: number;
+            /** @example 1920 */
+            width: number | null;
+            /** @example 1080 */
+            height: number | null;
+            /** @example 42.417 */
+            duration_seconds: number | null;
+            /** @example h264 */
+            video_codec: string | null;
+            /** @example aac */
+            audio_codec: string | null;
+            has_audio: boolean | null;
+            /** @description Whether the moov atom precedes media data for progressive playback. */
+            fast_start: boolean | null;
+            /** @description True for an H.264 MP4 with AAC or no audio, known dimensions and duration, and fast-start layout. Null for legacy videos not yet analyzed. */
+            social_compatible: boolean | null;
+            compatibility_warnings: {
+                /** @example video_codec_not_h264 */
+                code: string;
+                message: string;
+            }[];
+            social_optimization: components["schemas"]["VideoSocialOptimization"];
+            enrichment: components["schemas"]["VideoEnrichment"];
+            /** @example launch-demo.mp4 */
+            filename: string;
+            /** @description Logical folder used for organization and list filtering. */
+            folder: string | null;
+            /** @description Existing collection membership. */
+            collection_id: string | null;
+            /** @description Caller-managed custom metadata. */
+            metadata: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description Deletion time for a temporary video. Signed-URL expiry is separate.
+             */
+            expires_at?: string;
+            /** @description Present and true only when expires_at is set. */
+            temporary?: boolean;
+            /** @description Present and true when an idempotent retry returns an existing video. */
+            replayed?: boolean;
+            /** @description Unix timestamp when private original and derivative bearer URLs expire. */
+            signed_expires?: number;
+        };
+        VideoEnrichmentWebhookArtifact: {
+            /** @enum {string} */
+            type: "transcript_text" | "transcript_vtt" | "transcript_segments" | "storyboard_index" | "storyboard_sheet";
+            /** Format: uri */
+            url: string;
+            content_type: string;
+            sheet_index?: number;
+            start_seconds?: number;
+            end_seconds?: number;
+            frame_count?: number;
+        };
+        /** @description Signed terminal enrichment event. The event id is stable across delivery retries; job_id identifies one enrichment attempt and changes when a failed job is retried. */
+        VideoEnrichmentWebhookEvent: {
+            /**
+             * @description Stable event id. Deduplicate repeated deliveries on this value.
+             * @example whe_a1b2c3d4e5f6
+             */
+            id: string;
+            /** @enum {string} */
+            type: "video.enrichment.completed" | "video.enrichment.failed";
+            /** Format: date-time */
+            created_at: string;
+            data: {
+                video: {
+                    /** @example vid_a1b2c3d4e5f6 */
+                    id: string;
+                    /** @constant */
+                    kind: "video";
+                    /** Format: uri */
+                    original_url: string;
+                    /** @enum {string} */
+                    visibility: "public" | "private";
+                    /** @description Unix expiry for private original/poster URLs. Omitted for public video. */
+                    signed_expires?: number;
+                };
+                enrichment: {
+                    /**
+                     * @description Stable identifier for this enrichment attempt.
+                     * @example ven_a1b2c3d4e5f6
+                     */
+                    job_id: string;
+                    /** @enum {string} */
+                    status: "complete" | "failed";
+                    /** Format: date-time */
+                    requested_at: string;
+                    /** Format: date-time */
+                    completed_at: string;
+                    /**
+                     * Format: uri
+                     * @description GET this video to poll or inspect current state.
+                     */
+                    status_url: string;
+                    /**
+                     * Format: uri
+                     * @description POST with expires_in to mint fresh private original and artifact URLs.
+                     */
+                    refresh_url: string;
+                    /** @description Unix expiry shared by private artifact URLs. Omitted for public video. */
+                    signed_expires?: number;
+                    transcript?: {
+                        [key: string]: unknown;
+                    };
+                    storyboard?: {
+                        [key: string]: unknown;
+                    };
+                    /** @description Only artifacts that exist. Present only for completed enrichment. */
+                    artifacts?: components["schemas"]["VideoEnrichmentWebhookArtifact"][];
+                    /** @description Safe code and message. Present only for failed enrichment. */
+                    error?: {
+                        code: string;
+                        message: string;
+                    };
+                };
+            };
+        };
+        WebhookEndpoint: {
+            /** @example whk_a1b2c3d4e5f6 */
+            id: string;
+            /** Format: uri */
+            url: string;
+            description: string | null;
+            events: ("media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed")[];
+            active: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        WebhookDelivery: {
+            /** @example whd_a1b2c3d4e5f6 */
+            id: string;
+            /** @example whe_a1b2c3d4e5f6 */
+            event_id: string;
+            /** @enum {string} */
+            event: "media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed";
+            /** @enum {string} */
+            status: "pending" | "delivering" | "retrying" | "delivered" | "failed" | "skipped";
+            attempts: number;
+            response_status?: number | null;
+            error?: string | null;
+            /** Format: date-time */
+            next_attempt_at?: string | null;
+            /** Format: date-time */
+            last_attempt_at?: string | null;
+            /** Format: date-time */
+            delivered_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
         };
     };
     responses: never;
@@ -830,6 +1532,8 @@ export interface operations {
                 collection_id?: string;
                 /** @description Full-text search over the AI description (alt text, caption, OCR text) of images uploaded with `describe=true`, best match first (words are ANDed; quote phrases, `-word` excludes). Max 200 characters. Combines (AND) with `metadata` and `collection_id`. Images that were never described are not matched. */
                 q?: string;
+                /** @description Only images carrying this AI tag (one tag, e.g. `boat`; see GET /v1/images/tags for the tags in use). Matched in the lowercase form tags are stored in. Combines (AND) with `q`, `metadata` and `collection_id`. Images that were never described have no tags. */
+                tag?: string;
                 /** @description JSON object; returns images whose custom metadata contains every key/value pair (e.g. `{"env":"prod"}`). Typed values match exactly; nested objects match by containment. Conflicting duplicates (the same key with different values across `metadata` and `meta[key]`) return 400. */
                 metadata?: string;
                 /** @description Shorthand string match on one metadata key, e.g. `?meta[env]=prod`. Use it once per key, for several different keys; combines (AND) with `metadata`. */
@@ -883,7 +1587,7 @@ export interface operations {
                 "multipart/form-data": {
                     /**
                      * Format: binary
-                     * @description Image file to upload
+                     * @description Image or PDF file to upload
                      */
                     file: string;
                     /** @description Optional folder name */
@@ -909,7 +1613,7 @@ export interface operations {
                 "application/json": {
                     /**
                      * Format: uri
-                     * @description Source image URL to import (https only). Requires an API key.
+                     * @description Source image or PDF URL to import (https only). Requires an API key.
                      */
                     url: string;
                     /** @description Optional folder name */
@@ -986,6 +1690,99 @@ export interface operations {
             };
             /** @description Upload or storage limit reached */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_image_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tags with image counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            /** @example boat */
+                            tag?: string;
+                            /** @example 12 */
+                            count?: number;
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid or missing API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    describe_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image's description state, or why none was started */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            /** @example img_a1b2c3d4e5f6 */
+                            id?: string;
+                            description?: components["schemas"]["DashboardDescription"];
+                            /** @enum {string} */
+                            describe_skipped?: "quota" | "email_unverified" | "busy" | "unsupported_type" | "too_large" | "unavailable";
+                        };
+                    };
+                };
+            };
+            /** @description Invalid or missing API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A publishable key, or a suspended account */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Image not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1306,6 +2103,171 @@ export interface operations {
             };
         };
     };
+    edit_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Source image id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description Natural-language edit instruction.
+                     * @example Remove the people in the background.
+                     */
+                    prompt: string;
+                    /**
+                     * @description Fast costs 1 edit credit. Quality costs 5 and requires a paid plan.
+                     * @default fast
+                     * @enum {string}
+                     */
+                    model?: "fast" | "quality";
+                    /** @description Folder for the new image. Defaults to the source folder. */
+                    folder?: string;
+                    /**
+                     * @description Visibility for the new image. Defaults to the source visibility.
+                     * @enum {string}
+                     */
+                    visibility?: "public" | "private";
+                    /** @description Delete the new image after this many seconds. Omit for permanent. */
+                    expires_in?: number;
+                    /** @description Signature lifetime for a private result URL. */
+                    sign_expires_in?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Edited image created and hosted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            id?: string;
+                            url?: string;
+                            optimized_url?: string;
+                            /** @enum {string} */
+                            visibility?: "public" | "private";
+                            mime_type?: string;
+                            size?: number;
+                            width?: number;
+                            height?: number;
+                            filename?: string;
+                            metadata?: {
+                                [key: string]: unknown;
+                            } | null;
+                            /** Format: date-time */
+                            created_at?: string;
+                            edit?: {
+                                source_image_id?: string;
+                                /** @enum {string} */
+                                model?: "fast" | "quality";
+                                credits_charged?: number;
+                                credits_remaining?: number;
+                            };
+                        };
+                    };
+                };
+            };
+            /** @description Invalid request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Invalid or missing API key or dashboard session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Edit credits exhausted, quality model requires a paid plan, or upload/storage quota reached */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Publishable key or unverified email */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Source image not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unsupported source or refused prompt */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Editing rate or daily cost limit exceeded; carries Retry-After */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Source preparation or model output failed; edit credits refunded */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Image editing unavailable; edit credits refunded */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Image editing timed out; edit credits refunded */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     batch_upload: {
         parameters: {
             query?: never;
@@ -1439,6 +2401,8 @@ export interface operations {
                                 uploads_per_month?: number;
                                 /** @description Monthly bandwidth cap. */
                                 bandwidth_bytes_per_month?: number;
+                                /** @description Monthly unique-transform cap per project. */
+                                transforms_per_month?: number;
                             };
                             remaining?: {
                                 /** @description Storage left (floored at 0). */
@@ -1449,10 +2413,24 @@ export interface operations {
                             /** @description AI image-generation credits (POST /v1/images/generate) for the current month. */
                             generation?: {
                                 credits_used?: number;
-                                /** @description Monthly credit grant for the plan. */
+                                /** @description Monthly generation credit grant for the plan. */
                                 credits_limit?: number;
-                                /** @description Credits left this month (floored at 0). */
+                                /** @description Generation credits left this month (floored at 0). */
                                 credits_remaining?: number;
+                            };
+                            /** @description Natural-language image-edit credits (POST /v1/images/{id}/edit) for the current month. */
+                            editing?: {
+                                credits_used?: number;
+                                /** @description Monthly edit credit grant for the plan. */
+                                credits_limit?: number;
+                                /** @description Edit credits left this month (floored at 0). */
+                                credits_remaining?: number;
+                            };
+                            /** @description Transcript + storyboard source seconds reserved in the current month. */
+                            video_enrichment?: {
+                                seconds_used: number;
+                                seconds_limit: number;
+                                seconds_remaining: number;
                             };
                         };
                     };
@@ -1718,6 +2696,283 @@ export interface operations {
             };
         };
     };
+    list_webhooks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhook endpoints and entitlement */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            webhooks?: components["schemas"]["WebhookEndpoint"][];
+                            /** @description 0 Free, 3 Starter, 10 Pro. */
+                            limit?: number;
+                            remaining?: number;
+                            available_events?: string[];
+                        };
+                    };
+                };
+            };
+            /** @description Invalid or missing credentials */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Publishable key or suspended account */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    create_webhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: uri
+                     * @description Public HTTPS URL on port 443. Redirects are not followed.
+                     */
+                    url: string;
+                    description?: string | null;
+                    /**
+                     * @default [
+                     *       "media.created",
+                     *       "media.deleted",
+                     *       "image.description.completed",
+                     *       "image.description.failed",
+                     *       "export.completed",
+                     *       "export.failed",
+                     *       "video.optimization.completed",
+                     *       "video.optimization.failed",
+                     *       "video.enrichment.completed",
+                     *       "video.enrichment.failed"
+                     *     ]
+                     */
+                    events?: ("media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed")[];
+                };
+            };
+        };
+        responses: {
+            /** @description Endpoint created; signing_secret is shown only in this response. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["WebhookEndpoint"] & {
+                            /** @example whsec_... */
+                            signing_secret?: string;
+                        };
+                    };
+                };
+            };
+            /** @description Invalid URL, description, or events */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Webhooks require Starter or Pro */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Endpoint limit reached or URL already configured */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    delete_webhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Webhook not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    update_webhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uri */
+                    url?: string;
+                    description?: string | null;
+                    events?: ("media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed")[];
+                    active?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated endpoint */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["WebhookEndpoint"];
+                    };
+                };
+            };
+            /** @description Invalid update */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Webhook not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description URL already configured */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rotate_webhook_secret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Secret rotated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            id?: string;
+                            /** @example whsec_... */
+                            signing_secret?: string;
+                        };
+                    };
+                };
+            };
+            /** @description Webhook not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_webhook_deliveries: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["WebhookDelivery"][];
+                    };
+                };
+            };
+        };
+    };
     sign_image_url: {
         parameters: {
             query?: never;
@@ -1969,7 +3224,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The collection with its images */
+            /** @description The collection with assets and its legacy images subset */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2059,6 +3314,10 @@ export interface operations {
                         status?: string;
                         /** @example 128 */
                         image_count?: number;
+                        /** @example 4 */
+                        video_count?: number;
+                        /** @example 132 */
+                        asset_count?: number;
                         /** @example /v1/export-jobs/exp_a1b2c3d4e5f6 */
                         status_url?: string;
                     };
@@ -2138,6 +3397,8 @@ export interface operations {
                          */
                         status?: "pending" | "processing" | "complete" | "failed" | "expired";
                         image_count?: number;
+                        video_count?: number;
+                        asset_count?: number;
                         processed_count?: number;
                         bytes?: number;
                         /** Format: date-time */
@@ -2240,13 +3501,13 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The `claim_token` returned by POST /v1/playground/upload. */
+                    /** @description The `claim_token` returned by an anonymous playground upload. */
                     token: string;
                 };
             };
         };
         responses: {
-            /** @description Already claimed — the same image, returned without storing a second copy */
+            /** @description Already claimed — the same media, returned without storing a second copy */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2255,7 +3516,7 @@ export interface operations {
                     "application/json": Record<string, never>;
                 };
             };
-            /** @description Image saved permanently */
+            /** @description Media saved permanently */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -2265,6 +3526,8 @@ export interface operations {
                         data?: {
                             /** @example img_a1b2c3d4e5f6 */
                             id?: string;
+                            /** @enum {string} */
+                            kind?: "image" | "document" | "video";
                             /** Format: uri */
                             url?: string;
                             /** @example image/png */
@@ -2344,6 +3607,824 @@ export interface operations {
             };
         };
     };
+    list_videos: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+                /** @description Only videos in this collection. */
+                collection_id?: string;
+                /** @description Exact logical-folder match. */
+                folder?: string;
+                /** @description JSON object containment filter. meta[key]=value query parameters are also supported. */
+                metadata?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated videos */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"][];
+                        meta?: Record<string, never>;
+                    };
+                };
+            };
+        };
+    };
+    upload_video: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Original filename for a raw video/mp4 request. Percent-encode non-ASCII characters. */
+                "X-PixelVault-Filename"?: string;
+                /** @description Raw video visibility. Private uploads require a secret key. */
+                "X-PixelVault-Visibility"?: "public" | "private";
+                /** @description Lifetime of returned private video and poster URLs in seconds. */
+                "X-PixelVault-Sign-Expires-In"?: number;
+                /** @description For a raw video/mp4 upload, enqueue a separate H.264/AAC fast-start copy while preserving the original. */
+                "X-PixelVault-Social-Ready"?: boolean;
+                /** @description Non-space printable ASCII key, maximum 255 characters. Replays for 24 hours within this project. */
+                "Idempotency-Key"?: string;
+                /** @description Lowercase hex SHA-256 of raw MP4 bytes. Required with Idempotency-Key for direct uploads and verified while streaming. */
+                "X-PixelVault-Content-SHA256"?: string;
+                "X-PixelVault-Folder"?: string;
+                "X-PixelVault-Collection-Id"?: string;
+                /** @description JSON object string containing custom metadata. */
+                "X-PixelVault-Metadata"?: string;
+                /** @description Asset deletion TTL in seconds. */
+                "X-PixelVault-Expires-In"?: number;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "video/mp4": string;
+                "application/json": {
+                    /**
+                     * Format: uri
+                     * @description Public https URL for the MP4.
+                     */
+                    url: string;
+                    /** @description Optional original filename; defaults to the URL path. */
+                    filename?: string;
+                    /**
+                     * @default public
+                     * @enum {string}
+                     */
+                    visibility?: "public" | "private";
+                    /** @default 3600 */
+                    sign_expires_in?: number;
+                    /**
+                     * @description Enqueue a separate social-ready copy while preserving the original.
+                     * @default false
+                     */
+                    social_ready?: boolean;
+                    folder?: string;
+                    collection_id?: string;
+                    metadata?: {
+                        [key: string]: unknown;
+                    };
+                    /** @description Deletion TTL; distinct from sign_expires_in. */
+                    expires_in?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Idempotent replay of an existing video */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Video hosted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Invalid MP4, URL, or remote response */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A matching idempotent upload is still active */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Plan limit exceeded or raw upload needs multipart */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Idempotency-Key reused with conflicting inputs or collection visibility mismatch */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_video: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Video metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Video not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    delete_video: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Video not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    update_video: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    metadata?: {
+                        [key: string]: unknown;
+                    } | null;
+                    folder?: string | null;
+                    collection_id?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated video */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Video or collection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Collection visibility mismatch */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    optimize_video: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Already complete or original already social-ready */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Optimization queued or processing */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Monthly optimization allowance exhausted */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Video not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Source MP4 exceeds 100 MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Duration or MP4 metadata is unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Optimization service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    enrich_video: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Enrichment already complete */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Enrichment queued or processing */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Monthly enrichment allowance exhausted */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Video not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Source MP4 exceeds 100 MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Duration or MP4 metadata is unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Media Transformations or transcription unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    analyze_video: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Analyzed video */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Video not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    generate_video_poster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Video with poster metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Video not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Frame extraction failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Media Transformations unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sign_video_url: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @default 3600 */
+                    expires_in?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Signed URL pair */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Video not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    create_video_upload: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    filename: string;
+                    size: number;
+                    /**
+                     * @default public
+                     * @enum {string}
+                     */
+                    visibility?: "public" | "private";
+                    /** @description Whole-file digest used to detect conflicting retries. Required with Idempotency-Key. */
+                    sha256?: string;
+                    folder?: string;
+                    collection_id?: string;
+                    metadata?: {
+                        [key: string]: unknown;
+                    };
+                    /** @description Asset deletion TTL after completion. */
+                    expires_in?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Idempotent replay of an active or completed session */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Multipart session created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Plan video-size limit exceeded */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Idempotency-Key conflicts with earlier inputs */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    upload_video_part: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Hex SHA-256 verified while streaming; required when the session has an Idempotency-Key. */
+                "X-PixelVault-Part-SHA256"?: string;
+            };
+            path: {
+                uploadId: string;
+                partNumber: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Part stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upload session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Part already exists with conflicting or unverifiable bytes */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    complete_video_upload: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-PixelVault-Sign-Expires-In"?: number;
+                /** @description Enqueue a social-ready copy after multipart completion. Sources must be at most 100 MB and 60 seconds. */
+                "X-PixelVault-Social-Ready"?: boolean;
+            };
+            path: {
+                uploadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Idempotent replay after a successful commit */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Video hosted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Video"];
+                    };
+                };
+            };
+            /** @description Incomplete or invalid MP4 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    abort_video_upload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uploadId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Upload aborted and reserved quota released */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upload session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The upload already committed; delete the video asset instead */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    dashboard_list_images: {
+        parameters: {
+            query?: {
+                /** @description Filename search text (max 100 characters). */
+                q?: string;
+                /** @description Only images carrying this AI tag (one tag: letters, digits, spaces or hyphens, lowercased). Combines with `q`. */
+                tag?: string;
+                /** @description Comma-separated image ids (at most 20): return only these of the caller's own images. Read-only; the dashboard uses it to watch a pending AI description finish. */
+                ids?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of images */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            /** @example img_a1b2c3d4e5f6 */
+                            id?: string;
+                            /** @description CDN URL; a short-lived signed URL for private images. */
+                            url?: string;
+                            /** @enum {string} */
+                            visibility?: "public" | "private";
+                            filename?: string;
+                            /** @example image/png */
+                            mime_type?: string;
+                            size_bytes?: number;
+                            width?: number | null;
+                            height?: number | null;
+                            project_id?: string;
+                            folder?: string | null;
+                            /** Format: date-time */
+                            created_at?: string;
+                            description?: components["schemas"]["DashboardDescription"];
+                        }[];
+                        meta?: {
+                            /** @description Images matching the search. */
+                            total?: number;
+                            limit?: number;
+                            offset?: number;
+                            has_more?: boolean;
+                        };
+                    };
+                };
+            };
+            /** @description Search text too long */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No valid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     dashboard_upload: {
         parameters: {
             query?: never;
@@ -2356,9 +4437,14 @@ export interface operations {
                 "multipart/form-data": {
                     /**
                      * Format: binary
-                     * @description The image file. Max 5 MB; type is detected from magic bytes.
+                     * @description The image or PDF file. Max 5 MB on Free, 10 MB on Starter, 15 MB on Pro; type is detected from magic bytes.
                      */
                     file: string;
+                    /**
+                     * @description Set to `true` to also start an AI description (alt text, caption, OCR text) for this image. Uses the account's description allowance (free: 20 for life; Starter: 1,000 a month; Pro: 10,000 a month). Never fails the upload: the response says why nothing was started.
+                     * @enum {string}
+                     */
+                    describe?: "true" | "false";
                 };
             };
         };
@@ -2373,6 +4459,8 @@ export interface operations {
                         data?: {
                             /** @example img_a1b2c3d4e5f6 */
                             id?: string;
+                            /** @enum {string} */
+                            kind?: "image" | "document";
                             /** Format: uri */
                             url?: string;
                             /** @example image/png */
@@ -2383,6 +4471,12 @@ export interface operations {
                             filename?: string;
                             /** @example proj_a1b2c3d4e5f6 */
                             project_id?: string;
+                            description?: components["schemas"]["DashboardDescription"];
+                            /**
+                             * @description Present only when describe was requested and no description was started.
+                             * @enum {string}
+                             */
+                            describe_skipped?: "quota" | "email_unverified" | "busy" | "unsupported_type" | "too_large" | "unavailable" | "secret_key_required";
                         };
                     };
                 };
@@ -2432,7 +4526,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description File larger than 5 MB */
+            /** @description File larger than the plan's per-image cap (5 MB free and keyless, 10 MB Starter, 15 MB Pro) */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -2443,6 +4537,99 @@ export interface operations {
             };
             /** @description Rate limit or monthly upload quota exceeded */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    dashboard_list_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tags with image counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            /** @example boat */
+                            tag?: string;
+                            /** @example 12 */
+                            count?: number;
+                        }[];
+                    };
+                };
+            };
+            /** @description No valid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    dashboard_describe_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image's description state, or why none was started */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            /** @example img_a1b2c3d4e5f6 */
+                            id?: string;
+                            description?: components["schemas"]["DashboardDescription"];
+                            /** @enum {string} */
+                            describe_skipped?: "quota" | "email_unverified" | "busy" | "unsupported_type" | "too_large" | "unavailable" | "secret_key_required";
+                        };
+                    };
+                };
+            };
+            /** @description No valid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Account suspended */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such image in this account */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2611,7 +4798,7 @@ export interface operations {
                 "multipart/form-data": {
                     /**
                      * Format: binary
-                     * @description Image file to upload (max 2 MB)
+                     * @description Image or PDF file to upload (max 2 MB)
                      */
                     file: string;
                 };
@@ -2628,6 +4815,8 @@ export interface operations {
                         data?: {
                             /** @example tmp_a1b2c3d4e5f6 */
                             id?: string;
+                            /** @enum {string} */
+                            kind?: "image" | "document";
                             /** Format: uri */
                             url?: string;
                             /** @example image/png */
@@ -2636,7 +4825,7 @@ export interface operations {
                             size?: number;
                             /** @example 86400 */
                             expires_in?: number;
-                            /** @description Proof that this caller performed the upload. Exchange it at POST /v1/claim to keep the image permanently in a signed-in account. Valid for 24 hours and idempotent per project — redeeming it again returns the image already saved rather than storing a second copy. */
+                            /** @description Proof that this caller performed the upload. Exchange it at POST /v1/claim to keep the image or document permanently in a signed-in account. Valid for 24 hours and idempotent per project — redeeming it again returns the media already saved rather than storing a second copy. */
                             claim_token?: string;
                             /** @example 86400 */
                             claim_expires_in?: number;
@@ -2655,6 +4844,97 @@ export interface operations {
             };
             /** @description File exceeds the 2 MB playground limit */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    playground_video_upload: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Original filename. Defaults to video.mp4. */
+                "X-PixelVault-Filename"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "video/mp4": string;
+            };
+        };
+        responses: {
+            /** @description Temporary video uploaded */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            /** @example tmp_a1b2c3d4e5f6 */
+                            id?: string;
+                            /** @constant */
+                            kind?: "video";
+                            /** Format: uri */
+                            url?: string;
+                            /** @constant */
+                            mime_type?: "video/mp4";
+                            /** @example 12000000 */
+                            size?: number;
+                            /** @example 86400 */
+                            expires_in?: number;
+                            /** @description Exchange at POST /v1/claim within 24 hours to keep the video. */
+                            claim_token?: string;
+                            /** @example 86400 */
+                            claim_expires_in?: number;
+                        };
+                    };
+                };
+            };
+            /** @description Missing or invalid MP4 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Content-Length missing or invalid */
+            411: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description File exceeds the 25 MB temporary limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Content-Type is not video/mp4 */
+            415: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -3,7 +3,7 @@
   "info": {
     "title": "PixelVault API",
     "version": "1.0.0",
-    "description": "Agent-first image hosting API. Upload images via API, get instant CDN URLs. Free tier: 200 MB storage, 500 uploads/month, 1 GB bandwidth/month.",
+    "description": "Agent-first image, PDF document, and original-MP4 hosting API. Upload media via API and get instant CDN URLs. PDFs are always served as download attachments. Free tier: 200 MB storage, 500 uploads/month, 1 GB bandwidth/month.",
     "contact": {
       "email": "support@pixelvault.dev"
     }
@@ -25,10 +25,37 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Dashboard session token, issued by POST /v1/auth/login. Used only by endpoints a signed-in person drives from the web app (POST /v1/claim, POST /v1/uploads), never by the image API."
+        "description": "Dashboard session token, issued by POST /v1/auth/login. Used by endpoints a signed-in person drives from the web app, including media uploads and management."
       }
     },
     "schemas": {
+      "DashboardDescription": {
+        "type": "object",
+        "nullable": true,
+        "description": "Compact AI-description state for the dashboard: `pending` while the vision call runs (a few seconds), `done` with the alt text, or `failed`. Null when the image has none. The full caption and OCR text are returned by GET /v1/images/{id}, not here.",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "done",
+              "failed"
+            ]
+          },
+          "alt": {
+            "type": "string",
+            "nullable": true,
+            "description": "Alt text; null unless status is `done`."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to 5 short lowercase singular topic tags (e.g. `boat`, `harbour`); descriptions made before 2026-11-12 may carry a sixth and plural forms. Empty unless status is `done`, and for descriptions made before tags existed. Untrusted model output: render as text."
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "properties": {
@@ -56,10 +83,18 @@
             "type": "string",
             "example": "img_a1b2c3d4e5f6"
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "image",
+              "document"
+            ],
+            "description": "PDF uploads are `document`; renderable image formats are `image`."
+          },
           "url": {
             "type": "string",
             "format": "uri",
-            "description": "CDN URL. Supports on-the-fly transforms via query params: size (s|m|l|social), w, h (px, snapped to a discrete set), fit (scale-down|contain|cover|crop|pad), fmt (auto|webp|avif|jpg|png), q (auto|60|75|85), segment (foreground — AI background removal, transparent PNG), background (fill: hex, rgb()/rgba(), or a common CSS color name), gravity (auto|face|left|right|top|bottom|XxY, with fit=cover|crop), zoom (0.0-1.0, with gravity=face), blur (0-250), sharpen (0-10), rotate (90|180|270), flip (h|v|hv), brightness/contrast (multiplier, 1=no change), saturation (multiplier, 0=grayscale), tile (watermark: tile another of your project's images over the base). See the serve_image operation for the full parameter reference. Example: ?w=800&blur=30&saturation=0",
+            "description": "CDN URL. Images support on-the-fly transforms via query params: size (s|m|l|social), w, h (px, snapped to a discrete set), fit (scale-down|contain|cover|crop|pad), fmt (auto|webp|avif|jpg|png), q (auto|60|75|85), segment (foreground — AI background removal, transparent PNG), background (fill: hex, rgb()/rgba(), or a common CSS color name), gravity (auto|face|left|right|top|bottom|XxY, with fit=cover|crop), zoom (0.0-1.0, with gravity=face), blur (0-250), sharpen (0-10), rotate (90|180|270), flip (h|v|hv), brightness/contrast (multiplier, 1=no change), saturation (multiplier, 0=grayscale), tile (watermark: tile another of your project's images over the base). PDFs reject transform parameters and are always served with `Content-Disposition: attachment`. See the serve_image operation for the full image parameter reference.",
             "example": "https://img.pixelvault.dev/proj_xyz789/a1b2c3d4e5f6.jpg"
           },
           "optimized_url": {
@@ -130,6 +165,13 @@
               "ocr_text": {
                 "type": "string"
               },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Up to 5 short lowercase singular topic tags for grouping and filtering (e.g. `boat`, `harbour`); descriptions made before 2026-11-12 may carry a sixth and plural forms. Absent on descriptions made before tags existed. Untrusted model output: render as text."
+              },
               "model": {
                 "type": "string"
               },
@@ -185,6 +227,784 @@
             "description": "Present (true) when an `Idempotency-Key` repeat returned the original upload's image."
           }
         }
+      },
+      "VideoSocialOptimization": {
+        "type": "object",
+        "description": "State of the optional social preset. The original MP4 is never replaced. not_needed means the original already passed H.264/AAC fast-start validation.",
+        "properties": {
+          "preset": {
+            "type": "string",
+            "const": "social"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "not_requested",
+              "pending",
+              "processing",
+              "complete",
+              "failed",
+              "not_needed"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "original",
+              "derived"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "video_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "audio_codec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fast_start": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "preset",
+          "status"
+        ]
+      },
+      "VideoEnrichment": {
+        "type": "object",
+        "description": "State of the optional transcript + storyboard job. Generated artifacts inherit the video's visibility and signed-URL expiry.",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "not_requested",
+              "pending",
+              "processing",
+              "complete",
+              "failed"
+            ]
+          },
+          "job_id": {
+            "type": "string",
+            "description": "Stable identifier for this enrichment attempt. Repeated requests while queued, running, or complete return the same job ID; retrying a failed job creates a new one.",
+            "example": "ven_a1b2c3d4e5f6"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "transcript": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "complete",
+                  "skipped"
+                ]
+              },
+              "text_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "vtt_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "segments_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "language": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "languages": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "model": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "segment_count": {
+                "type": "integer"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "no_audio"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "storyboard": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "complete"
+              },
+              "index_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "frame_count": {
+                "type": "integer"
+              },
+              "sheets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "start_seconds": {
+                      "type": "number"
+                    },
+                    "end_seconds": {
+                      "type": "number"
+                    },
+                    "frame_count": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "url",
+                    "start_seconds",
+                    "end_seconds",
+                    "frame_count"
+                  ]
+                }
+              }
+            }
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "Video": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "vid_a1b2c3d4e5f6"
+          },
+          "kind": {
+            "type": "string",
+            "const": "video"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://img.pixelvault.dev/proj_xyz789/vid_a1b2c3d4e5f6.mp4"
+          },
+          "original_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The stored original MP4. Equal to url; explicit so one-step social-ready callers can retain both outputs."
+          },
+          "social_ready_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Completed H.264/AAC fast-start URL. Present only after social optimization completes."
+          },
+          "poster_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Generated 640×360 JPEG frame. Private videos return an expiry-matched signed poster URL."
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ]
+          },
+          "mime_type": {
+            "type": "string",
+            "const": "video/mp4"
+          },
+          "size": {
+            "type": "integer",
+            "example": 24000000
+          },
+          "width": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "example": 1920
+          },
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "example": 1080
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "example": 42.417
+          },
+          "video_codec": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "h264"
+          },
+          "audio_codec": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "aac"
+          },
+          "has_audio": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "fast_start": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the moov atom precedes media data for progressive playback."
+          },
+          "social_compatible": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "True for an H.264 MP4 with AAC or no audio, known dimensions and duration, and fast-start layout. Null for legacy videos not yet analyzed."
+          },
+          "compatibility_warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "example": "video_codec_not_h264"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            }
+          },
+          "social_optimization": {
+            "$ref": "#/components/schemas/VideoSocialOptimization"
+          },
+          "enrichment": {
+            "$ref": "#/components/schemas/VideoEnrichment"
+          },
+          "filename": {
+            "type": "string",
+            "example": "launch-demo.mp4"
+          },
+          "folder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Logical folder used for organization and list filtering."
+          },
+          "collection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Existing collection membership."
+          },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Caller-managed custom metadata."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Deletion time for a temporary video. Signed-URL expiry is separate."
+          },
+          "temporary": {
+            "type": "boolean",
+            "description": "Present and true only when expires_at is set."
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "Present and true when an idempotent retry returns an existing video."
+          },
+          "signed_expires": {
+            "type": "integer",
+            "description": "Unix timestamp when private original and derivative bearer URLs expire."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "url",
+          "original_url",
+          "visibility",
+          "mime_type",
+          "size",
+          "width",
+          "height",
+          "duration_seconds",
+          "video_codec",
+          "audio_codec",
+          "has_audio",
+          "fast_start",
+          "social_compatible",
+          "compatibility_warnings",
+          "social_optimization",
+          "enrichment",
+          "filename",
+          "folder",
+          "collection_id",
+          "metadata",
+          "created_at"
+        ]
+      },
+      "VideoEnrichmentWebhookArtifact": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "transcript_text",
+              "transcript_vtt",
+              "transcript_segments",
+              "storyboard_index",
+              "storyboard_sheet"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "sheet_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "start_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "end_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "frame_count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "type",
+          "url",
+          "content_type"
+        ]
+      },
+      "VideoEnrichmentWebhookEvent": {
+        "type": "object",
+        "description": "Signed terminal enrichment event. The event id is stable across delivery retries; job_id identifies one enrichment attempt and changes when a failed job is retried.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable event id. Deduplicate repeated deliveries on this value.",
+            "example": "whe_a1b2c3d4e5f6"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "video.enrichment.completed",
+              "video.enrichment.failed"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "video": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "example": "vid_a1b2c3d4e5f6"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "const": "video"
+                  },
+                  "original_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ]
+                  },
+                  "signed_expires": {
+                    "type": "integer",
+                    "description": "Unix expiry for private original/poster URLs. Omitted for public video."
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "original_url",
+                  "visibility"
+                ]
+              },
+              "enrichment": {
+                "type": "object",
+                "properties": {
+                  "job_id": {
+                    "type": "string",
+                    "description": "Stable identifier for this enrichment attempt.",
+                    "example": "ven_a1b2c3d4e5f6"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "complete",
+                      "failed"
+                    ]
+                  },
+                  "requested_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "completed_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "status_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "GET this video to poll or inspect current state."
+                  },
+                  "refresh_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "POST with expires_in to mint fresh private original and artifact URLs."
+                  },
+                  "signed_expires": {
+                    "type": "integer",
+                    "description": "Unix expiry shared by private artifact URLs. Omitted for public video."
+                  },
+                  "transcript": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "storyboard": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "artifacts": {
+                    "type": "array",
+                    "description": "Only artifacts that exist. Present only for completed enrichment.",
+                    "items": {
+                      "$ref": "#/components/schemas/VideoEnrichmentWebhookArtifact"
+                    }
+                  },
+                  "error": {
+                    "type": "object",
+                    "description": "Safe code and message. Present only for failed enrichment.",
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "message"
+                    ]
+                  }
+                },
+                "required": [
+                  "job_id",
+                  "status",
+                  "requested_at",
+                  "completed_at",
+                  "status_url",
+                  "refresh_url"
+                ]
+              }
+            },
+            "required": [
+              "video",
+              "enrichment"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "created_at",
+          "data"
+        ]
+      },
+      "WebhookEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "whk_a1b2c3d4e5f6"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "media.created",
+                "media.deleted",
+                "image.description.completed",
+                "image.description.failed",
+                "export.completed",
+                "export.failed",
+                "video.optimization.completed",
+                "video.optimization.failed",
+                "video.enrichment.completed",
+                "video.enrichment.failed"
+              ]
+            }
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "description",
+          "events",
+          "active",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "whd_a1b2c3d4e5f6"
+          },
+          "event_id": {
+            "type": "string",
+            "example": "whe_a1b2c3d4e5f6"
+          },
+          "event": {
+            "type": "string",
+            "enum": [
+              "media.created",
+              "media.deleted",
+              "image.description.completed",
+              "image.description.failed",
+              "export.completed",
+              "export.failed",
+              "video.optimization.completed",
+              "video.optimization.failed",
+              "video.enrichment.completed",
+              "video.enrichment.failed"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "delivering",
+              "retrying",
+              "delivered",
+              "failed",
+              "skipped"
+            ]
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "response_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "delivered_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "event_id",
+          "event",
+          "status",
+          "attempts",
+          "created_at"
+        ]
       }
     }
   },
@@ -494,8 +1314,8 @@
         "tags": [
           "Images"
         ],
-        "summary": "Upload an image",
-        "description": "Upload an image and receive a public CDN URL (JPEG, PNG, GIF, WebP, AVIF, SVG). Works WITHOUT an API key: keyless uploads are temporary (response includes `temporary: true` and `expires_in`, ~30 days) — add a Bearer key to make uploads permanent. Send multipart/form-data (a file), or, with a key, application/json `{ url }` to import from a URL (https only). Retry-safe: send an `Idempotency-Key` header and a retry after a timeout returns the original image instead of storing a second copy; add `dedupe=true` to reuse an existing image with identical bytes. `width` and `height` are returned for every format whose header carries them.",
+        "summary": "Upload an image or PDF",
+        "description": "Upload a file and receive a public CDN URL (JPEG, PNG, GIF, WebP, AVIF, SVG, PDF). PDFs are opaque, download-only documents: they are served with `Content-Disposition: attachment`, `X-Robots-Tag: noindex`, and reject image transforms. Works WITHOUT an API key: keyless uploads are temporary (response includes `temporary: true` and `expires_in`, ~30 days) — add a Bearer key to make uploads permanent. Send multipart/form-data (a file), or, with a key, application/json `{ url }` to import from an https URL. Retry-safe: send an `Idempotency-Key` header and a retry after a timeout returns the original upload instead of storing a second copy; add `dedupe=true` to reuse an existing upload with identical bytes. `width` and `height` are returned only for image formats whose header carries them.",
         "security": [
           {
             "bearerAuth": []
@@ -525,7 +1345,7 @@
                   "file": {
                     "type": "string",
                     "format": "binary",
-                    "description": "Image file to upload"
+                    "description": "Image or PDF file to upload"
                   },
                   "folder": {
                     "type": "string",
@@ -575,7 +1395,7 @@
                   "url": {
                     "type": "string",
                     "format": "uri",
-                    "description": "Source image URL to import (https only). Requires an API key."
+                    "description": "Source image or PDF URL to import (https only). Requires an API key."
                   },
                   "folder": {
                     "type": "string",
@@ -743,6 +1563,15 @@
             }
           },
           {
+            "name": "tag",
+            "in": "query",
+            "description": "Only images carrying this AI tag (one tag, e.g. `boat`; see GET /v1/images/tags for the tags in use). Matched in the lowercase form tags are stored in. Combines (AND) with `q`, `metadata` and `collection_id`. Images that were never described have no tags.",
+            "schema": {
+              "type": "string",
+              "maxLength": 40
+            }
+          },
+          {
             "name": "metadata",
             "in": "query",
             "description": "JSON object; returns images whose custom metadata contains every key/value pair (e.g. `{\"env\":\"prod\"}`). Typed values match exactly; nested objects match by containment. Conflicting duplicates (the same key with different values across `metadata` and `meta[key]`) return 400.",
@@ -794,6 +1623,154 @@
           },
           "401": {
             "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/images/tags": {
+      "get": {
+        "operationId": "list_image_tags",
+        "tags": [
+          "Images"
+        ],
+        "summary": "List the project's AI tags with counts",
+        "description": "The AI tags on the project's described images with how many images carry each, most used first (at most 40). Filter the image list with GET /v1/images?tag=.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tags with image counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "tag": {
+                            "type": "string",
+                            "example": "boat"
+                          },
+                          "count": {
+                            "type": "integer",
+                            "example": 12
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/images/{id}/describe": {
+      "post": {
+        "operationId": "describe_image",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Start an AI description for an existing image",
+        "description": "Start the AI description (alt text, caption, OCR text, tags) of a stored image, for images uploaded without `describe=true`. Needs a secret key. Idempotent: an image that is already described, or being described, returns its current state and uses none of the allowance. A failed or stalled description is started again (and uses one unit). A description takes a few seconds: poll GET /v1/images/{id} until `description.status` is `done` (do not poll this endpoint). Uses the account's description allowance (free: 20 for life; Starter: 1,000 a month; Pro: 10,000 a month); when it is used up, `describe_skipped` is `quota`. An unknown id or another project's image returns 404.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "img_a1b2c3d4e5f6"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image's description state, or why none was started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "img_a1b2c3d4e5f6"
+                        },
+                        "description": {
+                          "$ref": "#/components/schemas/DashboardDescription"
+                        },
+                        "describe_skipped": {
+                          "type": "string",
+                          "enum": [
+                            "quota",
+                            "email_unverified",
+                            "busy",
+                            "unsupported_type",
+                            "too_large",
+                            "unavailable"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A publishable key, or a suspended account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Image not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1272,6 +2249,273 @@
         }
       }
     },
+    "/v1/images/{id}/edit": {
+      "post": {
+        "operationId": "edit_image",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Edit an image with a natural-language instruction",
+        "description": "Create a new hosted image by editing an existing image you own; the source is never overwritten. Uses Cloudflare FLUX.2 with zero data retention. Fast edits cost 1 monthly edit credit and work on every plan (Free 5, Starter 100, Pro 500); quality edits cost 5 and require a paid plan. Credits reset on the 1st (UTC) and are refunded if model inference or storage fails. JPEG, PNG, WebP, AVIF and GIF sources up to 20 MB are accepted. Output visibility defaults to the source visibility. The new image also counts toward upload and storage quotas. Accepts either a secret API key or the signed-in dashboard session; the account must have a verified email.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "img_a1b2c3d4e5f6"
+            },
+            "description": "Source image id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "description": "Natural-language edit instruction.",
+                    "example": "Remove the people in the background."
+                  },
+                  "model": {
+                    "type": "string",
+                    "enum": [
+                      "fast",
+                      "quality"
+                    ],
+                    "default": "fast",
+                    "description": "Fast costs 1 edit credit. Quality costs 5 and requires a paid plan."
+                  },
+                  "folder": {
+                    "type": "string",
+                    "description": "Folder for the new image. Defaults to the source folder."
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ],
+                    "description": "Visibility for the new image. Defaults to the source visibility."
+                  },
+                  "expires_in": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 2592000,
+                    "description": "Delete the new image after this many seconds. Omit for permanent."
+                  },
+                  "sign_expires_in": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 2592000,
+                    "description": "Signature lifetime for a private result URL."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Edited image created and hosted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "optimized_url": {
+                          "type": "string"
+                        },
+                        "visibility": {
+                          "type": "string",
+                          "enum": [
+                            "public",
+                            "private"
+                          ]
+                        },
+                        "mime_type": {
+                          "type": "string"
+                        },
+                        "size": {
+                          "type": "integer"
+                        },
+                        "width": {
+                          "type": "integer"
+                        },
+                        "height": {
+                          "type": "integer"
+                        },
+                        "filename": {
+                          "type": "string"
+                        },
+                        "metadata": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "additionalProperties": true
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "edit": {
+                          "type": "object",
+                          "properties": {
+                            "source_image_id": {
+                              "type": "string"
+                            },
+                            "model": {
+                              "type": "string",
+                              "enum": [
+                                "fast",
+                                "quality"
+                              ]
+                            },
+                            "credits_charged": {
+                              "type": "integer"
+                            },
+                            "credits_remaining": {
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key or dashboard session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Edit credits exhausted, quality model requires a paid plan, or upload/storage quota reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Publishable key or unverified email",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Source image not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unsupported source or refused prompt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Editing rate or daily cost limit exceeded; carries Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Source preparation or model output failed; edit credits refunded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Image editing unavailable; edit credits refunded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Image editing timed out; edit credits refunded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/images/batch": {
       "post": {
         "operationId": "batch_upload",
@@ -1449,7 +2693,7 @@
           "Account"
         ],
         "summary": "Get plan, limits and usage",
-        "description": "Plan, limits and current usage for the calling key's project, so an agent can check quota before uploading. Storage is the cumulative total (what the cap enforces); uploads are the current UTC month and reset at `resets_at`. Bandwidth usage is not reported (the CDN owns those counters); the bandwidth limit is. Requires a secret key.",
+        "description": "Plan, limits and current usage for the calling key's project, so an agent can check quota before uploading. Storage is the cumulative total (what the cap enforces); uploads are the current UTC month and reset at `resets_at`. Bandwidth and unique-transform usage are owned by the CDN and are not reported here; their monthly limits are. Requires a secret key.",
         "security": [
           {
             "bearerAuth": []
@@ -1509,6 +2753,10 @@
                             "bandwidth_bytes_per_month": {
                               "type": "integer",
                               "description": "Monthly bandwidth cap."
+                            },
+                            "transforms_per_month": {
+                              "type": "integer",
+                              "description": "Monthly unique-transform cap per project."
                             }
                           }
                         },
@@ -1534,13 +2782,50 @@
                             },
                             "credits_limit": {
                               "type": "integer",
-                              "description": "Monthly credit grant for the plan."
+                              "description": "Monthly generation credit grant for the plan."
                             },
                             "credits_remaining": {
                               "type": "integer",
-                              "description": "Credits left this month (floored at 0)."
+                              "description": "Generation credits left this month (floored at 0)."
                             }
                           }
+                        },
+                        "editing": {
+                          "type": "object",
+                          "description": "Natural-language image-edit credits (POST /v1/images/{id}/edit) for the current month.",
+                          "properties": {
+                            "credits_used": {
+                              "type": "integer"
+                            },
+                            "credits_limit": {
+                              "type": "integer",
+                              "description": "Monthly edit credit grant for the plan."
+                            },
+                            "credits_remaining": {
+                              "type": "integer",
+                              "description": "Edit credits left this month (floored at 0)."
+                            }
+                          }
+                        },
+                        "video_enrichment": {
+                          "type": "object",
+                          "description": "Transcript + storyboard source seconds reserved in the current month.",
+                          "properties": {
+                            "seconds_used": {
+                              "type": "integer"
+                            },
+                            "seconds_limit": {
+                              "type": "integer"
+                            },
+                            "seconds_remaining": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "seconds_used",
+                            "seconds_limit",
+                            "seconds_remaining"
+                          ]
                         }
                       }
                     }
@@ -1938,6 +3223,555 @@
         }
       }
     },
+    "/v1/webhooks": {
+      "get": {
+        "operationId": "list_webhooks",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "List webhook endpoints",
+        "description": "List the current project's signed webhook endpoints and plan limit. Requires a secret API key or dashboard session.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Webhook endpoints and entitlement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "webhooks": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/WebhookEndpoint"
+                          }
+                        },
+                        "limit": {
+                          "type": "integer",
+                          "description": "0 Free, 3 Starter, 10 Pro."
+                        },
+                        "remaining": {
+                          "type": "integer"
+                        },
+                        "available_events": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Publishable key or suspended account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "create_webhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Create a webhook endpoint",
+        "description": "Create a public-HTTPS endpoint for consumer-actionable media lifecycle events: create/delete, AI description completion/failure, export completion/failure, video optimization completion/failure, and video enrichment completion/failure. Synchronous generation and editing failures stay in their API responses; their successful outputs emit `media.created` with `source` `generation` or `edit`. Returns `signing_secret` once. Starter supports 3 endpoints; Pro supports 10; Free receives 402. Delivery is at least once: deduplicate on the stable event `id`; repeated delivery attempts retain that id, while a retried enrichment job has a new `job_id`. PixelVault retries non-2xx/network failures after approximately 1m, 5m, 30m, and 2h. Polling `GET /v1/videos/{id}` remains supported. Private artifact URLs in callbacks expire; call the payload's `refresh_url` to mint a fresh set.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Public HTTPS URL on port 443. Redirects are not followed."
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100
+                  },
+                  "events": {
+                    "type": "array",
+                    "minItems": 1,
+                    "default": [
+                      "media.created",
+                      "media.deleted",
+                      "image.description.completed",
+                      "image.description.failed",
+                      "export.completed",
+                      "export.failed",
+                      "video.optimization.completed",
+                      "video.optimization.failed",
+                      "video.enrichment.completed",
+                      "video.enrichment.failed"
+                    ],
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "media.created",
+                        "media.deleted",
+                        "image.description.completed",
+                        "image.description.failed",
+                        "export.completed",
+                        "export.failed",
+                        "video.optimization.completed",
+                        "video.optimization.failed",
+                        "video.enrichment.completed",
+                        "video.enrichment.failed"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "callbacks": {
+          "videoEnrichment": {
+            "{$request.body#/url}": {
+              "post": {
+                "summary": "Signed terminal video enrichment event",
+                "parameters": [
+                  {
+                    "name": "X-PixelVault-Webhook-Id",
+                    "in": "header",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "X-PixelVault-Webhook-Event",
+                    "in": "header",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "X-PixelVault-Webhook-Timestamp",
+                    "in": "header",
+                    "required": true,
+                    "schema": {
+                      "type": "integer"
+                    }
+                  },
+                  {
+                    "name": "X-PixelVault-Webhook-Signature",
+                    "in": "header",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "requestBody": {
+                  "required": true,
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "$ref": "#/components/schemas/VideoEnrichmentWebhookEvent"
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "Accepted. Any 2xx acknowledges this delivery."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Endpoint created; signing_secret is shown only in this response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/WebhookEndpoint"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "signing_secret": {
+                              "type": "string",
+                              "example": "whsec_..."
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid URL, description, or events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Webhooks require Starter or Pro",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Endpoint limit reached or URL already configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}": {
+      "patch": {
+        "operationId": "update_webhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Update a webhook endpoint",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100
+                  },
+                  "events": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "media.created",
+                        "media.deleted",
+                        "image.description.completed",
+                        "image.description.failed",
+                        "export.completed",
+                        "export.failed",
+                        "video.optimization.completed",
+                        "video.optimization.failed",
+                        "video.enrichment.completed",
+                        "video.enrichment.failed"
+                      ]
+                    }
+                  },
+                  "active": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated endpoint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WebhookEndpoint"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid update",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Webhook not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "URL already configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_webhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Delete a webhook endpoint and its delivery log",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Webhook not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/rotate-secret": {
+      "post": {
+        "operationId": "rotate_webhook_secret",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Rotate a webhook signing secret",
+        "description": "Immediately invalidates the previous signing secret and returns the replacement once.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret rotated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "signing_secret": {
+                          "type": "string",
+                          "example": "whsec_..."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Webhook not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/deliveries": {
+      "get": {
+        "operationId": "list_webhook_deliveries",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Inspect recent webhook deliveries",
+        "description": "Newest-first delivery attempts retained for 30 days. Response bodies are never stored.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delivery log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WebhookDelivery"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/images/{id}/sign-url": {
       "post": {
         "operationId": "sign_image_url",
@@ -2223,9 +4057,11 @@
       "get": {
         "operationId": "get_collection",
         "tags": [
-          "Images"
+          "Images",
+          "Videos"
         ],
-        "summary": "Get a collection and its images",
+        "summary": "Get a collection and its media",
+        "description": "Returns assets for every member, plus the backward-compatible images subset. Private asset URLs are unsigned identifiers; use the media type's sign-url endpoint.",
         "security": [
           {
             "bearerAuth": []
@@ -2244,7 +4080,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The collection with its images"
+            "description": "The collection with assets and its legacy images subset"
           },
           "401": {
             "description": "Invalid or missing API key",
@@ -2273,10 +4109,11 @@
       "post": {
         "operationId": "close_collection",
         "tags": [
-          "Images"
+          "Images",
+          "Videos"
         ],
         "summary": "Close a collection",
-        "description": "Mark a collection closed (e.g. on PR merge) and make its images eligible for the reap sweep now, ahead of their TTL.",
+        "description": "Marks a collection closed and makes all member media eligible for lifecycle cleanup ahead of their TTL.",
         "security": [
           {
             "bearerAuth": []
@@ -2324,10 +4161,11 @@
       "post": {
         "operationId": "start_export",
         "tags": [
-          "Images"
+          "Images",
+          "Videos"
         ],
-        "summary": "Start a bulk export",
-        "description": "Start an asynchronous export of every image in the project into a downloadable tar archive (plus a manifest.json of id, filename, storage key, URL, and metadata per image). Your data is always portable — no lock-in. Returns a job; poll status_url until complete, then download. Auth is project-scoped: pass a secret key to export that key's project, or a dashboard token together with a project_id query parameter.",
+        "summary": "Start a media export",
+        "description": "Starts an asynchronous tar export of every non-expired image and video in the project. manifest.json keeps the v1 images array and adds video originals, custom metadata, collection/folder membership, job state, and parent relationships for existing posters, optimized copies, transcripts, and storyboards. Private bytes are included under owner-authenticated download, but the manifest never stores permanent or stale signed URLs. Pending and failed jobs are recorded without invented artifact paths. Deleted assets are absent at snapshot time; an asset deleted during assembly remains in the manifest but its missing bytes are skipped. Poll status_url until complete.",
         "security": [
           {
             "bearerAuth": []
@@ -2364,6 +4202,14 @@
                     "image_count": {
                       "type": "integer",
                       "example": 128
+                    },
+                    "video_count": {
+                      "type": "integer",
+                      "example": 4
+                    },
+                    "asset_count": {
+                      "type": "integer",
+                      "example": 132
                     },
                     "status_url": {
                       "type": "string",
@@ -2431,10 +4277,11 @@
       "get": {
         "operationId": "get_export_job",
         "tags": [
-          "Images"
+          "Images",
+          "Videos"
         ],
-        "summary": "Get export job status",
-        "description": "Poll an export job. When status is 'complete', the response includes download_url. Auth is the same as starting an export (secret key, or dashboard token + project_id).",
+        "summary": "Get media export job status",
+        "description": "Poll an export job. processed_count counts asset rows, not derived files. When status is complete, the response includes download_url. Auth is the same as starting an export.",
         "security": [
           {
             "bearerAuth": []
@@ -2482,6 +4329,12 @@
                       ]
                     },
                     "image_count": {
+                      "type": "integer"
+                    },
+                    "video_count": {
+                      "type": "integer"
+                    },
+                    "asset_count": {
                       "type": "integer"
                     },
                     "processed_count": {
@@ -2624,10 +4477,11 @@
       "post": {
         "operationId": "claim_upload",
         "tags": [
-          "Images"
+          "Images",
+          "Videos"
         ],
-        "summary": "Claim an anonymous upload into your account",
-        "description": "Exchange the `claim_token` from POST /v1/playground/upload for a permanent image in your account. Authenticates with a dashboard session token (JWT), NOT an API key — this is the path a web user takes to keep an image they just made, without ever touching a key. Idempotent per project (enforced by a unique index, so concurrent claims cannot store duplicates): re-claiming returns the image already saved. Valid for 24 hours, after which the temporary upload no longer exists.",
+        "summary": "Claim anonymous media into your account",
+        "description": "Exchange the `claim_token` from POST /v1/playground/upload or POST /v1/playground/video for permanent media in your account. Authenticates with a dashboard session token (JWT), NOT an API key. Idempotent per project: re-claiming returns the media already saved. Valid for 24 hours, after which the temporary upload no longer exists.",
         "security": [
           {
             "sessionAuth": []
@@ -2642,7 +4496,7 @@
                 "properties": {
                   "token": {
                     "type": "string",
-                    "description": "The `claim_token` returned by POST /v1/playground/upload."
+                    "description": "The `claim_token` returned by an anonymous playground upload."
                   }
                 },
                 "required": [
@@ -2654,7 +4508,7 @@
         },
         "responses": {
           "200": {
-            "description": "Already claimed — the same image, returned without storing a second copy",
+            "description": "Already claimed — the same media, returned without storing a second copy",
             "content": {
               "application/json": {
                 "schema": {
@@ -2664,7 +4518,7 @@
             }
           },
           "201": {
-            "description": "Image saved permanently",
+            "description": "Media saved permanently",
             "content": {
               "application/json": {
                 "schema": {
@@ -2676,6 +4530,14 @@
                         "id": {
                           "type": "string",
                           "example": "img_a1b2c3d4e5f6"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "image",
+                            "document",
+                            "video"
+                          ]
                         },
                         "url": {
                           "type": "string",
@@ -2777,14 +4639,1450 @@
         }
       }
     },
+    "/v1/videos": {
+      "post": {
+        "operationId": "upload_video",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Upload or import an original MP4",
+        "description": "Hosts original MP4 bytes or securely imports an https URL. Idempotency-Key is scoped to the authenticated project and retained for 24 hours: same inputs replay the original asset (200), conflicting inputs return 422, and an active retry returns 409 without creating another upload. Direct uploads using a key must send X-PixelVault-Content-SHA256; URL imports fingerprint the URL and storage settings. Idempotency is not content deduplication: different keys create distinct assets, never across projects or visibility. expires_in deletes the original, poster, optimized copy, transcript, and storyboard; active jobs are failed and released first. Signed-URL expiry does not delete the asset. The original is always preserved. Raw requests need Content-Length and multipart above 100 MB; URL imports require remote Content-Length.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-PixelVault-Filename",
+            "in": "header",
+            "required": false,
+            "description": "Original filename for a raw video/mp4 request. Percent-encode non-ASCII characters.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          {
+            "name": "X-PixelVault-Visibility",
+            "in": "header",
+            "required": false,
+            "description": "Raw video visibility. Private uploads require a secret key.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "public",
+                "private"
+              ],
+              "default": "public"
+            }
+          },
+          {
+            "name": "X-PixelVault-Sign-Expires-In",
+            "in": "header",
+            "required": false,
+            "description": "Lifetime of returned private video and poster URLs in seconds.",
+            "schema": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 2592000,
+              "default": 3600
+            }
+          },
+          {
+            "name": "X-PixelVault-Social-Ready",
+            "in": "header",
+            "required": false,
+            "description": "For a raw video/mp4 upload, enqueue a separate H.264/AAC fast-start copy while preserving the original.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Non-space printable ASCII key, maximum 255 characters. Replays for 24 hours within this project.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          {
+            "name": "X-PixelVault-Content-SHA256",
+            "in": "header",
+            "required": false,
+            "description": "Lowercase hex SHA-256 of raw MP4 bytes. Required with Idempotency-Key for direct uploads and verified while streaming.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            }
+          },
+          {
+            "name": "X-PixelVault-Folder",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            }
+          },
+          {
+            "name": "X-PixelVault-Collection-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-PixelVault-Metadata",
+            "in": "header",
+            "required": false,
+            "description": "JSON object string containing custom metadata.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-PixelVault-Expires-In",
+            "in": "header",
+            "required": false,
+            "description": "Asset deletion TTL in seconds.",
+            "schema": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 2592000
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "video/mp4": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Public https URL for the MP4."
+                  },
+                  "filename": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "description": "Optional original filename; defaults to the URL path."
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ],
+                    "default": "public"
+                  },
+                  "sign_expires_in": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 2592000,
+                    "default": 3600
+                  },
+                  "social_ready": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enqueue a separate social-ready copy while preserving the original."
+                  },
+                  "folder": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                  },
+                  "collection_id": {
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "expires_in": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 2592000,
+                    "description": "Deletion TTL; distinct from sign_expires_in."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent replay of an existing video",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Video hosted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid MP4, URL, or remote response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A matching idempotent upload is still active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Plan limit exceeded or raw upload needs multipart",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Idempotency-Key reused with conflicting inputs or collection visibility mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_videos",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "List hosted videos",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "collection_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only videos in this collection."
+          },
+          {
+            "name": "folder",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "description": "Exact logical-folder match."
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "JSON object containment filter. meta[key]=value query parameters are also supported."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated videos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Video"
+                      }
+                    },
+                    "meta": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "get_video",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Get video metadata",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Video metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Video not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "update_video",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Replace video organization fields",
+        "description": "Updates custom metadata, logical folder, and/or existing collection membership. Omitted fields remain unchanged; null clears. Collection visibility must match the video.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "metadata": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "additionalProperties": true
+                  },
+                  "folder": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                  },
+                  "collection_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "minProperties": 1
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated video",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Video or collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Collection visibility mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_video",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Delete a video",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Video not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{id}/optimize": {
+      "post": {
+        "operationId": "optimize_video",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Create a social-ready H.264/AAC fast-start MP4",
+        "description": "Idempotently enqueues the social preset while preserving the original. Returns 202 while pending/processing and 200 when complete or when the original is already compatible. Supports source MP4s up to 100 MB and 60 seconds. Monthly output allowances: Free 2 minutes, Starter 30 minutes, Pro 120 minutes. Poll GET /v1/videos/{id} until social_optimization.status is complete or failed.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Already complete or original already social-ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Optimization queued or processing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Monthly optimization allowance exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Video not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Source MP4 exceeds 100 MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Duration or MP4 metadata is unsupported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Optimization service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{id}/enrich": {
+      "post": {
+        "operationId": "enrich_video",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Generate a transcript and storyboard",
+        "description": "Idempotently enqueues transcript text, timed WebVTT, timestamped JSON segments, and bounded storyboard sheets. Returns 202 while pending/processing and 200 when complete. Silent videos skip the transcript but still receive a storyboard. Supports source MP4s from 1 second through 10 minutes and up to 100 MB. Monthly source-minute allowances: Free 2 minutes, Starter 30 minutes, Pro 120 minutes. Poll GET /v1/videos/{id} until enrichment.status is complete or failed.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Enrichment already complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Enrichment queued or processing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Monthly enrichment allowance exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Video not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Source MP4 exceeds 100 MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Duration or MP4 metadata is unsupported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Media Transformations or transcription unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{id}/analyze": {
+      "post": {
+        "operationId": "analyze_video",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Analyze video metadata and social compatibility",
+        "description": "Reads bounded MP4 container metadata without transcoding. Use this to backfill legacy videos or refresh compatibility fields.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Analyzed video",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Video not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{id}/poster": {
+      "post": {
+        "operationId": "generate_video_poster",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Generate or return a video's poster frame",
+        "description": "Idempotently extracts and stores a 640×360 JPEG frame. Use this to backfill legacy videos or retry a transient transformation failure.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Video with poster metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Video not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Frame extraction failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Media Transformations unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{id}/sign-url": {
+      "post": {
+        "operationId": "sign_video_url",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Create signed URLs for a video and its derivatives",
+        "description": "Returns expiry-matched bearer URLs for the original MP4, poster, completed social-ready copy, transcript artifacts, and storyboard sheets when present.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expires_in": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 2592000,
+                    "default": 3600
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed URL pair"
+          },
+          "404": {
+            "description": "Video not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/uploads": {
+      "post": {
+        "operationId": "create_video_upload",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Create a multipart MP4 upload",
+        "description": "Starts a 24-hour multipart session. Idempotency-Key is project-scoped and replays the same active or completed session for 24 hours; conflicting inputs return 422. sha256 is required with a key. This retry contract is separate from content deduplication. Use the returned 10 MiB part_size for equal non-final parts, upload parts sequentially, then complete.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 16
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ],
+                    "default": "public"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-fA-F0-9]{64}$",
+                    "description": "Whole-file digest used to detect conflicting retries. Required with Idempotency-Key."
+                  },
+                  "folder": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                  },
+                  "collection_id": {
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "expires_in": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 2592000,
+                    "description": "Asset deletion TTL after completion."
+                  }
+                },
+                "required": [
+                  "filename",
+                  "size"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent replay of an active or completed session"
+          },
+          "201": {
+            "description": "Multipart session created"
+          },
+          "413": {
+            "description": "Plan video-size limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Idempotency-Key conflicts with earlier inputs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/uploads/{uploadId}/parts/{partNumber}": {
+      "put": {
+        "operationId": "upload_video_part",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Upload the next MP4 part",
+        "description": "Parts are sequential from 1. Every non-final part must use the session's part_size. For idempotent sessions, send X-PixelVault-Part-SHA256; exact part retries return the stored part with replayed=true, while conflicting bytes return 409.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "uploadId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "partNumber",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "X-PixelVault-Part-SHA256",
+            "in": "header",
+            "required": false,
+            "description": "Hex SHA-256 verified while streaming; required when the session has an Idempotency-Key.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Part stored"
+          },
+          "404": {
+            "description": "Upload session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Part already exists with conflicting or unverifiable bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/uploads/{uploadId}/complete": {
+      "post": {
+        "operationId": "complete_video_upload",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Complete and validate an MP4 upload",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "uploadId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-PixelVault-Sign-Expires-In",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 2592000,
+              "default": 3600
+            }
+          },
+          {
+            "name": "X-PixelVault-Social-Ready",
+            "in": "header",
+            "required": false,
+            "description": "Enqueue a social-ready copy after multipart completion. Sources must be at most 100 MB and 60 seconds.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Idempotent replay after a successful commit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Video hosted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Video"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Incomplete or invalid MP4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/uploads/{uploadId}": {
+      "delete": {
+        "operationId": "abort_video_upload",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Abort a multipart upload",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "uploadId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Upload aborted and reserved quota released"
+          },
+          "404": {
+            "description": "Upload session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The upload already committed; delete the video asset instead",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/uploads": {
+      "get": {
+        "operationId": "dashboard_list_images",
+        "tags": [
+          "Images"
+        ],
+        "summary": "List and search images from a signed-in session",
+        "description": "The signed-in account's images across all its projects, newest first. Authenticates with a dashboard session token (JWT), NOT an API key — this is what the web dashboard's image list calls to load more and to search. Callers with an API key should use GET /v1/images. `q` is a case-insensitive substring match on the original filename (wildcards are matched literally) OR a full-text match in the image's AI description (alt text, caption, OCR text).",
+        "security": [
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Filename search text (max 100 characters).",
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "example": "screenshot"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "description": "Only images carrying this AI tag (one tag: letters, digits, spaces or hyphens, lowercased). Combines with `q`.",
+            "schema": {
+              "type": "string",
+              "maxLength": 24,
+              "example": "boat"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated image ids (at most 20): return only these of the caller's own images. Read-only; the dashboard uses it to watch a pending AI description finish.",
+            "schema": {
+              "type": "string",
+              "example": "img_a1b2c3d4e5f6,img_f6e5d4c3b2a1"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of images",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "example": "img_a1b2c3d4e5f6"
+                          },
+                          "url": {
+                            "type": "string",
+                            "description": "CDN URL; a short-lived signed URL for private images."
+                          },
+                          "visibility": {
+                            "type": "string",
+                            "enum": [
+                              "public",
+                              "private"
+                            ]
+                          },
+                          "filename": {
+                            "type": "string"
+                          },
+                          "mime_type": {
+                            "type": "string",
+                            "example": "image/png"
+                          },
+                          "size_bytes": {
+                            "type": "integer"
+                          },
+                          "width": {
+                            "type": "integer",
+                            "nullable": true
+                          },
+                          "height": {
+                            "type": "integer",
+                            "nullable": true
+                          },
+                          "project_id": {
+                            "type": "string"
+                          },
+                          "folder": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "description": {
+                            "$ref": "#/components/schemas/DashboardDescription"
+                          }
+                        }
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer",
+                          "description": "Images matching the search."
+                        },
+                        "limit": {
+                          "type": "integer"
+                        },
+                        "offset": {
+                          "type": "integer"
+                        },
+                        "has_more": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Search text too long",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "operationId": "dashboard_upload",
         "tags": [
           "Images"
         ],
-        "summary": "Upload an image from a signed-in session",
-        "description": "Store one image for the signed-in account. Authenticates with a dashboard session token (JWT), NOT an API key — this is what the web dashboard's uploader calls, so a person who has never been issued a key can still add images. The image lands in the account's default project.\n\nDeliberately narrow: one file per request, no folder, visibility, TTL or URL import. Callers that need those should use POST /v1/images with an API key.",
+        "summary": "Upload an image or PDF from a signed-in session",
+        "description": "Store one image or PDF document for the signed-in account. Authenticates with a dashboard session token (JWT), NOT an API key — this is what the web dashboard and converter tools call, so a person who has never been issued a key can still add media. PDFs are served as forced downloads. The upload lands in the account's default project.\n\nDeliberately narrow: one file per request, no folder, visibility, TTL or URL import. Callers that need those should use POST /v1/images with an API key.",
         "security": [
           {
             "sessionAuth": []
@@ -2800,7 +6098,15 @@
                   "file": {
                     "type": "string",
                     "format": "binary",
-                    "description": "The image file. Max 5 MB; type is detected from magic bytes."
+                    "description": "The image or PDF file. Max 5 MB on Free, 10 MB on Starter, 15 MB on Pro; type is detected from magic bytes."
+                  },
+                  "describe": {
+                    "type": "string",
+                    "enum": [
+                      "true",
+                      "false"
+                    ],
+                    "description": "Set to `true` to also start an AI description (alt text, caption, OCR text) for this image. Uses the account's description allowance (free: 20 for life; Starter: 1,000 a month; Pro: 10,000 a month). Never fails the upload: the response says why nothing was started."
                   }
                 },
                 "required": [
@@ -2825,6 +6131,13 @@
                           "type": "string",
                           "example": "img_a1b2c3d4e5f6"
                         },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "image",
+                            "document"
+                          ]
+                        },
                         "url": {
                           "type": "string",
                           "format": "uri"
@@ -2844,6 +6157,22 @@
                         "project_id": {
                           "type": "string",
                           "example": "proj_a1b2c3d4e5f6"
+                        },
+                        "description": {
+                          "$ref": "#/components/schemas/DashboardDescription"
+                        },
+                        "describe_skipped": {
+                          "type": "string",
+                          "enum": [
+                            "quota",
+                            "email_unverified",
+                            "busy",
+                            "unsupported_type",
+                            "too_large",
+                            "unavailable",
+                            "secret_key_required"
+                          ],
+                          "description": "Present only when describe was requested and no description was started."
                         }
                       }
                     }
@@ -2903,7 +6232,7 @@
             }
           },
           "413": {
-            "description": "File larger than 5 MB",
+            "description": "File larger than the plan's per-image cap (5 MB free and keyless, 10 MB Starter, 15 MB Pro)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2914,6 +6243,155 @@
           },
           "429": {
             "description": "Rate limit or monthly upload quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/uploads/tags": {
+      "get": {
+        "operationId": "dashboard_list_tags",
+        "tags": [
+          "Images"
+        ],
+        "summary": "List the account's AI tags with counts (signed-in session)",
+        "description": "The AI tags on the signed-in account's described images with how many images carry each, most used first (at most 40). Authenticates with a dashboard session token (JWT), NOT an API key. The dashboard uses it for its tag filter bar; filter the list with GET /v1/uploads?tag=.",
+        "security": [
+          {
+            "sessionAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tags with image counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "tag": {
+                            "type": "string",
+                            "example": "boat"
+                          },
+                          "count": {
+                            "type": "integer",
+                            "example": 12
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/uploads/{id}/describe": {
+      "post": {
+        "operationId": "dashboard_describe_image",
+        "tags": [
+          "Images"
+        ],
+        "summary": "Start an AI description for an existing image (signed-in session)",
+        "description": "Start the AI description (alt text, caption, OCR text) of one of the signed-in account's stored images — the dashboard's Describe button. Authenticates with a dashboard session token (JWT), NOT an API key. Idempotent: an image that is already described, or being described, returns its current state and uses none of the allowance. A failed or stalled description is started again (and uses one unit), so do not poll with this: to watch a pending description use the read-only GET /v1/uploads?ids=. A description takes a few seconds. Uses the account's description allowance (free: 20 for life; Starter: 1,000 a month; Pro: 10,000 a month); when it is used up, `describe_skipped` is `quota`. An unknown id or another account's image returns 404.",
+        "security": [
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "img_a1b2c3d4e5f6"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image's description state, or why none was started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "img_a1b2c3d4e5f6"
+                        },
+                        "description": {
+                          "$ref": "#/components/schemas/DashboardDescription"
+                        },
+                        "describe_skipped": {
+                          "type": "string",
+                          "enum": [
+                            "quota",
+                            "email_unverified",
+                            "busy",
+                            "unsupported_type",
+                            "too_large",
+                            "unavailable",
+                            "secret_key_required"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Account suspended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such image in this account",
             "content": {
               "application/json": {
                 "schema": {
@@ -3147,8 +6625,8 @@
         "tags": [
           "Images"
         ],
-        "summary": "Anonymous upload (no API key)",
-        "description": "Upload an image without an account or API key and get a temporary public CDN URL. Rate limited to 10 uploads/hour per IP, max 2 MB. Images are removed within 24 hours — use the authenticated upload for permanent hosting.",
+        "summary": "Anonymous image or PDF upload (no API key)",
+        "description": "Upload an image or PDF without an account or API key and get a temporary public CDN URL plus a claim token. Rate limited to 10 uploads/hour per IP, max 2 MB. PDFs are always served as download attachments. Uploads are removed within 24 hours — use the authenticated upload for permanent hosting.",
         "requestBody": {
           "required": true,
           "content": {
@@ -3159,7 +6637,7 @@
                   "file": {
                     "type": "string",
                     "format": "binary",
-                    "description": "Image file to upload (max 2 MB)"
+                    "description": "Image or PDF file to upload (max 2 MB)"
                   }
                 },
                 "required": [
@@ -3184,6 +6662,13 @@
                           "type": "string",
                           "example": "tmp_a1b2c3d4e5f6"
                         },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "image",
+                            "document"
+                          ]
+                        },
                         "url": {
                           "type": "string",
                           "format": "uri"
@@ -3202,7 +6687,7 @@
                         },
                         "claim_token": {
                           "type": "string",
-                          "description": "Proof that this caller performed the upload. Exchange it at POST /v1/claim to keep the image permanently in a signed-in account. Valid for 24 hours and idempotent per project — redeeming it again returns the image already saved rather than storing a second copy."
+                          "description": "Proof that this caller performed the upload. Exchange it at POST /v1/claim to keep the image or document permanently in a signed-in account. Valid for 24 hours and idempotent per project — redeeming it again returns the media already saved rather than storing a second copy."
                         },
                         "claim_expires_in": {
                           "type": "integer",
@@ -3227,6 +6712,141 @@
           },
           "413": {
             "description": "File exceeds the 2 MB playground limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/playground/video": {
+      "post": {
+        "operationId": "playground_video_upload",
+        "tags": [
+          "Videos"
+        ],
+        "summary": "Anonymous temporary MP4 upload",
+        "description": "Upload an MP4 without an account or API key and get a temporary public CDN URL plus a claim token. Limited to 25 MB and 3 uploads/hour per IP. Videos are removed within 24 hours unless claimed into a signed-in account.",
+        "parameters": [
+          {
+            "name": "X-PixelVault-Filename",
+            "in": "header",
+            "required": false,
+            "description": "Original filename. Defaults to video.mp4.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "video/mp4": {
+              "schema": {
+                "type": "string",
+                "format": "binary",
+                "maxLength": 25000000
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Temporary video uploaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "tmp_a1b2c3d4e5f6"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "video"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "mime_type": {
+                          "type": "string",
+                          "const": "video/mp4"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "example": 12000000
+                        },
+                        "expires_in": {
+                          "type": "integer",
+                          "example": 86400
+                        },
+                        "claim_token": {
+                          "type": "string",
+                          "description": "Exchange at POST /v1/claim within 24 hours to keep the video."
+                        },
+                        "claim_expires_in": {
+                          "type": "integer",
+                          "example": 86400
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid MP4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "Content-Length missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File exceeds the 25 MB temporary limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type is not video/mp4",
             "content": {
               "application/json": {
                 "schema": {

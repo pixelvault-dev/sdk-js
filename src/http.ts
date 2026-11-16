@@ -1,6 +1,6 @@
 import { PixelVaultError } from "./errors.js";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 
 export interface HttpConfig {
   baseUrl: string;
@@ -12,11 +12,14 @@ export interface HttpConfig {
 }
 
 export interface RequestOptions {
-  method: "GET" | "POST" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   query?: Record<string, string | number | undefined>;
   json?: unknown;
   form?: FormData;
+  body?: BodyInit;
+  headers?: Record<string, string>;
+  responseType?: "json" | "arrayBuffer";
   /** Skip the Authorization header (register, device login). */
   noAuth?: boolean;
   /** Per-call abort signal. */
@@ -67,6 +70,7 @@ export async function request<T>(
   const headers: Record<string, string> = {
     Accept: "application/json",
     "X-PixelVault-Client": `sdk-js/${VERSION}`,
+    ...opts.headers,
   };
   if (cfg.apiKey && !opts.noAuth) headers["Authorization"] = `Bearer ${cfg.apiKey}`;
 
@@ -76,6 +80,8 @@ export async function request<T>(
   } else if (opts.json !== undefined) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(opts.json);
+  } else {
+    body = opts.body;
   }
 
   for (let attempt = 0; ; attempt++) {
@@ -102,6 +108,8 @@ export async function request<T>(
     }
 
     if (res.ok) {
+      if (res.status === 204) return undefined as T;
+      if (opts.responseType === "arrayBuffer") return (await res.arrayBuffer()) as T;
       return (await res.json()) as T;
     }
 
