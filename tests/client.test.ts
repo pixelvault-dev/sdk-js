@@ -344,3 +344,180 @@ describe("AI descriptions", () => {
     expect(await client(pending as unknown as typeof fetch).images.waitForDescription("img_1", { intervalMs: 1, timeoutMs: 5 })).toMatchObject({ status: "pending" });
   });
 });
+
+const VIDEO = {
+  id: "vid_1",
+  kind: "video",
+  url: "https://img.pixelvault.dev/p/vid_1.mp4",
+  original_url: "https://img.pixelvault.dev/p/vid_1.mp4",
+  visibility: "public",
+  mime_type: "video/mp4",
+  size: 3,
+  width: 1920,
+  height: 1080,
+  duration_seconds: 2,
+  video_codec: "h264",
+  audio_codec: "aac",
+  has_audio: true,
+  fast_start: true,
+  social_compatible: true,
+  compatibility_warnings: [],
+  social_optimization: { status: "not_requested" },
+  enrichment: { status: "not_requested" },
+  filename: "clip.mp4",
+  folder: null,
+  collection_id: null,
+  metadata: null,
+  created_at: "2026-11-16T00:00:00Z",
+};
+
+describe("videos", () => {
+  it("uploads bytes with lifecycle and replay-safety headers", async () => {
+    const f = vi.fn(async () => json({ data: VIDEO }, 201));
+    const video = await client(f as unknown as typeof fetch).videos.upload({
+      file: new Uint8Array([1, 2, 3]),
+      filename: "hello world.mp4",
+      visibility: "private",
+      signExpiresIn: 300,
+      expiresIn: 3600,
+      folder: "demos",
+      collectionId: "col_1",
+      metadata: { env: "test" },
+      socialReady: true,
+      idempotencyKey: "retry-1",
+      sha256: "abc123",
+    });
+    expect(video.id).toBe("vid_1");
+    const [url, init] = f.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.pathname).toBe("/v1/videos");
+    expect(init.body).toBeInstanceOf(Blob);
+    expect(init.headers).toMatchObject({
+      "Content-Type": "video/mp4",
+      "X-PixelVault-Filename": "hello%20world.mp4",
+      "X-PixelVault-Visibility": "private",
+      "X-PixelVault-Sign-Expires-In": "300",
+      "X-PixelVault-Expires-In": "3600",
+      "X-PixelVault-Social-Ready": "true",
+      "X-PixelVault-Folder": "demos",
+      "X-PixelVault-Collection-Id": "col_1",
+      "X-PixelVault-Metadata": "{\"env\":\"test\"}",
+      "Idempotency-Key": "retry-1",
+      "X-PixelVault-Content-SHA256": "abc123",
+    });
+  });
+
+  it("imports an HTTPS video with the API field names", async () => {
+    const f = vi.fn(async () => json({ data: VIDEO }, 201));
+    await client(f as unknown as typeof fetch).videos.upload({
+      url: "https://example.com/clip.mp4",
+      filename: "clip.mp4",
+      idempotencyKey: "import-1",
+      metadata: { source: "demo" },
+      socialReady: false,
+    });
+    const [, init] = f.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(init.headers).toMatchObject({ "Idempotency-Key": "import-1" });
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      url: "https://example.com/clip.mp4",
+      filename: "clip.mp4",
+      social_ready: false,
+      metadata: { source: "demo" },
+    });
+  });
+
+  it("supports resumable initiation, replay-safe parts, completion, and abort", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ data: { upload_id: "vup_1", asset_id: "vid_1", part_size: 2, size: 3, visibility: "private", expires_at: "2026-11-16T01:00:00Z" } }, 201))
+      .mockResolvedValueOnce(json({ data: { part_number: 1, etag: "a", received: 2 } }))
+      .mockResolvedValueOnce(json({ data: { part_number: 2, etag: "b", received: 1 } }))
+      .mockResolvedValueOnce(json({ data: VIDEO }, 201))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const pv = client(f as unknown as typeof fetch);
+    const session = await pv.videos.createUpload({
+      filename: "clip.mp4",
+      size: 3,
+      sha256: "whole",
+      idempotencyKey: "resume-1",
+      visibility: "private",
+    });
+    await pv.videos.uploadPart(session.upload_id, 1, new Uint8Array([1, 2]), { sha256: "part-1" });
+    await pv.videos.uploadPart(session.upload_id, 2, new Uint8Array([3]));
+    const completed = await pv.videos.completeUpload(session.upload_id, { socialReady: true, signExpiresIn: 120 });
+    await pv.videos.abortUpload("vup_old");
+    expect(completed.id).toBe("vid_1");
+    expect((f.mock.calls[1] as unknown as [URL, RequestInit])[1]).toMatchObject({ method: "PUT" });
+    expect((f.mock.calls[1] as unknown as [URL, RequestInit])[1].headers).toMatchObject({
+      "X-PixelVault-Part-SHA256": "part-1",
+    });
+    expect((f.mock.calls[3] as unknown as [URL, RequestInit])[1].headers).toMatchObject({
+      "X-PixelVault-Social-Ready": "true",
+      "X-PixelVault-Sign-Expires-In": "120",
+    });
+  });
+
+  it("runs the resumable convenience flow and replays each part safely", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ data: { upload_id: "vup_1", asset_id: "vid_1", part_size: 2, size: 3, visibility: "public", expires_at: "2026-11-16T01:00:00Z" } }, 201))
+      .mockResolvedValueOnce(json({ data: { part_number: 1, etag: "a", received: 2 } }))
+      .mockResolvedValueOnce(json({ data: { part_number: 2, etag: "b", received: 1 } }))
+      .mockResolvedValueOnce(json({ data: VIDEO }, 201));
+    const video = await client(f as unknown as typeof fetch).videos.uploadResumable({
+      file: new Uint8Array([1, 2, 3]),
+      filename: "clip.mp4",
+      idempotencyKey: "resume-1",
+    });
+    expect(video.id).toBe("vid_1");
+    expect(f).toHaveBeenCalledTimes(4);
+    expect((f.mock.calls[1] as unknown as [URL, RequestInit])[1].headers).toHaveProperty("X-PixelVault-Part-SHA256");
+  });
+
+  it("gets, filters, updates, signs, queues jobs, and deletes", async () => {
+    const f = vi.fn(async (url: URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (url.pathname === "/v1/videos" && init?.method === "GET") {
+        return json({ data: [VIDEO], meta: { total: 1, page: 1, per_page: 20 } });
+      }
+      return json({ data: VIDEO });
+    });
+    const pv = client(f as unknown as typeof fetch);
+    await pv.videos.get("vid/1");
+    await pv.videos.list({ folder: "demos", collectionId: "col_1", metadata: { env: "test" } });
+    await pv.videos.update("vid_1", { metadata: null, folder: "archive", collectionId: null });
+    await pv.videos.signUrl("vid_1", { expiresIn: 300 });
+    await pv.videos.optimize("vid_1");
+    await pv.videos.enrich("vid_1");
+    await pv.videos.analyze("vid_1");
+    await pv.videos.createPoster("vid_1");
+    await pv.videos.delete("vid_1");
+
+    expect((f.mock.calls[0] as unknown as [URL])[0].pathname).toBe("/v1/videos/vid%2F1");
+    expect((f.mock.calls[1] as unknown as [URL])[0].search).toContain("metadata=%7B%22env%22%3A%22test%22%7D");
+    expect(JSON.parse((f.mock.calls[2] as unknown as [URL, RequestInit])[1].body as string)).toEqual({
+      metadata: null,
+      folder: "archive",
+      collection_id: null,
+    });
+    expect(JSON.parse((f.mock.calls[3] as unknown as [URL, RequestInit])[1].body as string)).toEqual({ expires_in: 300 });
+    expect((f.mock.calls[5] as unknown as [URL])[0].pathname).toBe("/v1/videos/vid_1/enrich");
+  });
+
+  it("waits for terminal state and distinguishes a local timeout", async () => {
+    const complete = { ...VIDEO, enrichment: { status: "complete", job_id: "ven_1" } };
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ data: complete }))
+      .mockResolvedValueOnce(json({ data: { ...VIDEO, social_optimization: { status: "processing", job_id: "vop_1" } } }));
+    const pv = client(f as unknown as typeof fetch);
+    await expect(pv.videos.waitForEnrichment("vid_1", { timeoutMs: 0 })).resolves.toMatchObject({
+      status: "complete",
+      timedOut: false,
+    });
+    await expect(pv.videos.waitForOptimization("vid_1", { timeoutMs: 0 })).resolves.toMatchObject({
+      status: "processing",
+      timedOut: true,
+    });
+  });
+});

@@ -1,6 +1,6 @@
 # @pixelvault-dev/sdk
 
-Official JavaScript/TypeScript SDK for [PixelVault](https://pixelvault.dev), agent-first image hosting.
+Official JavaScript/TypeScript SDK for [PixelVault](https://pixelvault.dev), agent-first media hosting.
 Zero dependencies. Works in Node 18+, Cloudflare Workers, Deno, Bun and browsers (use a publishable key there).
 
 ```bash
@@ -25,6 +25,18 @@ await pv.images.upload({ url: "https://example.com/a.png", expiresIn: 3600 });
 const art = await pv.images.generate({ prompt: "flat vector hero, a robot at a laptop, no text" });
 console.log(art.url);        // https://img.pixelvault.dev/...
 console.log(art.generation); // { model: "flux-1-schnell", credits_charged: 1, credits_remaining: 9 }
+
+// Upload or securely import an MP4
+const video = await pv.videos.upload({
+  file: videoBytes,
+  filename: "demo.mp4",
+  idempotencyKey: crypto.randomUUID(),
+  visibility: "private",
+});
+await pv.videos.enrich(video.id);
+const result = await pv.videos.waitForEnrichment(video.id, { timeoutMs: 10 * 60_000 });
+console.log(result.video.original_url);
+console.log(result.video.enrichment.transcript, result.video.enrichment.storyboard);
 ```
 
 `apiKey` falls back to the `PIXELVAULT_API_KEY` environment variable. With no key at all, `images.upload({ file })`
@@ -42,12 +54,21 @@ makes an anonymous upload that expires after 30 days.
 | `pv.images.updateMetadata(id, metadata \| null)` | Replace an image's custom metadata (replaces, not merges; `null` clears). Set it at upload with `metadata: { ... }` |
 | `pv.images.get(id)` / `pv.images.delete(id)` | Fetch / delete one image |
 | `pv.images.signUrl(id, { expiresIn? })` | Signed URL for a private image |
+| `pv.videos.upload({ file \| url, ... })` | Upload or securely import an MP4; supports visibility, TTL, metadata, folder, collection, idempotency and social-ready optimization |
+| `pv.videos.uploadResumable({ file, ... })` | Replay-safe multipart upload; initiation and uploaded parts can be resumed with the same idempotency key |
+| `pv.videos.createUpload(...)` / `.uploadPart(...)` / `.completeUpload(...)` / `.abortUpload(...)` | Manual resumable-upload lifecycle |
+| `pv.videos.get(id)` / `.list(...)` / `.listAll(...)` / `.delete(id)` | Video discovery and lifecycle |
+| `pv.videos.update(id, { metadata?, folder?, collectionId? })` | Replace metadata and organization fields; `null` clears |
+| `pv.videos.signUrl(id, { expiresIn? })` | Fresh private original, poster and available artifact URLs |
+| `pv.videos.optimize(id)` / `.enrich(id)` | Start asynchronous social optimization or transcript/storyboard enrichment |
+| `pv.videos.waitForOptimization(id, ...)` / `.waitForEnrichment(id, ...)` | Bounded polling with backoff; returns `{ video, status, timedOut }` and never cancels the server job |
 | `pv.usage.get()` | Plan, usage, limits and what is left this month (including generation credits) |
 | `pv.keys.list()` / `.create({ label?, environment? })` / `.revoke(id)` | Manage your API keys (secret keys only) |
 | `pv.register({ email })` | Create an account, returns a first key once |
 | `pv.deviceLoginStart({ email })` + `pv.deviceLoginComplete({ email, code })` | Passwordless key minting |
 
-Every call accepts an optional `signal` (`AbortSignal`). Image URLs support on-the-fly transforms through query
+Every call accepts an optional `signal` (`AbortSignal`). Video waits are bounded locally; `timedOut: true` means
+polling stopped, not that the server job was cancelled. Image URLs support on-the-fly transforms through query
 parameters (`?w=800&fmt=auto`), see the [docs](https://pixelvault.dev/docs).
 
 ## Errors and retries
@@ -66,8 +87,9 @@ try {
 ```
 
 The client retries `429` (honoring `Retry-After` up to 30 seconds) and, for `GET`/`DELETE` only, `5xx` and network
-errors. Uploads and `images.generate` are never retried after a `5xx` or a network error, so a lost response cannot create a duplicate image or spend credits twice. Tune with
-`maxRetries` (default 2) and `timeoutMs` (default 60000).
+errors. Uploads, job creation and `images.generate` are never retried after a `5xx` or network error. Use an
+`idempotencyKey` for replay-safe video direct/import/resumable uploads; replaying the same key with conflicting
+inputs fails. Tune with `maxRetries` (default 2) and `timeoutMs` (default 60000).
 
 ## Types
 
