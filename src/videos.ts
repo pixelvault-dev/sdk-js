@@ -135,7 +135,8 @@ function hex(bytes: ArrayBuffer): string {
 }
 
 async function sha256(blob: Blob): Promise<string> {
-  return hex(await globalThis.crypto.subtle.digest("SHA-256", await blob.arrayBuffer()));
+  const subtle = globalThis.crypto?.subtle ?? (await import("node:crypto")).webcrypto.subtle;
+  return hex(await subtle.digest("SHA-256", await blob.arrayBuffer()));
 }
 
 async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
