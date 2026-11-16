@@ -225,7 +225,7 @@ export interface paths {
         };
         /**
          * Get plan, limits and usage
-         * @description Plan, limits and current usage for the calling key's project, so an agent can check quota before uploading. Storage is the cumulative total (what the cap enforces); uploads are the current UTC month and reset at `resets_at`. Bandwidth and unique-transform usage are owned by the CDN and are not reported here; their monthly limits are. Requires a secret key.
+         * @description Plan, limits and current usage for the calling key's project, so an agent can check quota before work. Storage is cumulative; uploads and credit/second allowances use the current UTC month. `bandwidth` always carries the real limit, units and accounting period, but currently reports `status: unavailable` with null used/remaining values because the CDN's approximate counters are not exposed reliably to this worker. A usage check neither reserves capacity nor guarantees that a future CDN request will serve. Unique-transform usage is also unavailable. Requires a secret key.
          */
         get: operations["get_usage"];
         put?: never;
@@ -1200,6 +1200,18 @@ export interface components {
             replayed?: boolean;
             /** @description Unix timestamp when private original and derivative bearer URLs expire. */
             signed_expires?: number;
+        };
+        /** @description Expiry-matched bearer URLs for the original and every completed derivative. Optional URLs are omitted until their artifact exists. */
+        VideoSignedUrls: {
+            /** Format: uri */
+            url: string;
+            /** Format: uri */
+            poster_url?: string;
+            /** Format: uri */
+            social_url?: string;
+            enrichment: components["schemas"]["VideoEnrichment"];
+            /** @description Unix timestamp shared by every URL in this response. */
+            expires: number;
         };
         VideoEnrichmentWebhookArtifact: {
             /** @enum {string} */
@@ -2410,6 +2422,30 @@ export interface operations {
                                 /** @description Uploads left this month (floored at 0). */
                                 uploads?: number;
                             };
+                            /** @description Monthly CDN bandwidth measurement. Null is unknown, never zero. The current backend returns unavailable because its approximate CDN counter is not reliably readable here. `available` permits numeric zero; `unlimited` uses null limit/remaining; `delayed` freshness means measured_at predates the request. */
+                            bandwidth?: {
+                                /** @enum {string} */
+                                status: "available" | "unavailable" | "unlimited";
+                                /** @description Bytes accounted in this period, or null when unknown/not applicable. */
+                                used: number | null;
+                                /** @description Bytes left, or null when unknown/unlimited. */
+                                remaining: number | null;
+                                /** @description Monthly byte limit, or null only when status is unlimited. */
+                                limit: number | null;
+                                /** @enum {string} */
+                                unit: "bytes";
+                                /** @example 2026-10 */
+                                accounting_period: string;
+                                /** Format: date-time */
+                                resets_at: string;
+                                /**
+                                 * Format: date-time
+                                 * @description When used was measured; null when unavailable.
+                                 */
+                                measured_at: string | null;
+                                /** @enum {string} */
+                                freshness: "near_real_time" | "delayed" | "unavailable" | "not_applicable";
+                            };
                             /** @description AI image-generation credits (POST /v1/images/generate) for the current month. */
                             generation?: {
                                 credits_used?: number;
@@ -2425,6 +2461,12 @@ export interface operations {
                                 credits_limit?: number;
                                 /** @description Edit credits left this month (floored at 0). */
                                 credits_remaining?: number;
+                            };
+                            /** @description Social-ready video source seconds reserved in the current month. */
+                            video_optimization?: {
+                                seconds_used: number;
+                                seconds_limit: number;
+                                seconds_remaining: number;
                             };
                             /** @description Transcript + storyboard source seconds reserved in the current month. */
                             video_enrichment?: {
@@ -4135,12 +4177,16 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Signed URL pair */
+            /** @description Expiry-matched signed URLs for every available artifact */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["VideoSignedUrls"];
+                    };
+                };
             };
             /** @description Video not found */
             404: {
