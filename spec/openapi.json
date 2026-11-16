@@ -670,6 +670,36 @@
           "created_at"
         ]
       },
+      "VideoSignedUrls": {
+        "type": "object",
+        "description": "Expiry-matched bearer URLs for the original and every completed derivative. Optional URLs are omitted until their artifact exists.",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "poster_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "social_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "enrichment": {
+            "$ref": "#/components/schemas/VideoEnrichment"
+          },
+          "expires": {
+            "type": "integer",
+            "description": "Unix timestamp shared by every URL in this response."
+          }
+        },
+        "required": [
+          "url",
+          "enrichment",
+          "expires"
+        ]
+      },
       "VideoEnrichmentWebhookArtifact": {
         "type": "object",
         "properties": {
@@ -2693,7 +2723,7 @@
           "Account"
         ],
         "summary": "Get plan, limits and usage",
-        "description": "Plan, limits and current usage for the calling key's project, so an agent can check quota before uploading. Storage is the cumulative total (what the cap enforces); uploads are the current UTC month and reset at `resets_at`. Bandwidth and unique-transform usage are owned by the CDN and are not reported here; their monthly limits are. Requires a secret key.",
+        "description": "Plan, limits and current usage for the calling key's project, so an agent can check quota before work. Storage is cumulative; uploads and credit/second allowances use the current UTC month. `bandwidth` always carries the real limit, units and accounting period, but currently reports `status: unavailable` with null used/remaining values because the CDN's approximate counters are not exposed reliably to this worker. A usage check neither reserves capacity nor guarantees that a future CDN request will serve. Unique-transform usage is also unavailable. Requires a secret key.",
         "security": [
           {
             "bearerAuth": []
@@ -2773,6 +2803,87 @@
                             }
                           }
                         },
+                        "bandwidth": {
+                          "type": "object",
+                          "description": "Monthly CDN bandwidth measurement. Null is unknown, never zero. The current backend returns unavailable because its approximate CDN counter is not reliably readable here. `available` permits numeric zero; `unlimited` uses null limit/remaining; `delayed` freshness means measured_at predates the request.",
+                          "properties": {
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "available",
+                                "unavailable",
+                                "unlimited"
+                              ]
+                            },
+                            "used": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 0,
+                              "description": "Bytes accounted in this period, or null when unknown/not applicable."
+                            },
+                            "remaining": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 0,
+                              "description": "Bytes left, or null when unknown/unlimited."
+                            },
+                            "limit": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 0,
+                              "description": "Monthly byte limit, or null only when status is unlimited."
+                            },
+                            "unit": {
+                              "type": "string",
+                              "enum": [
+                                "bytes"
+                              ]
+                            },
+                            "accounting_period": {
+                              "type": "string",
+                              "pattern": "^\\d{4}-\\d{2}$",
+                              "example": "2026-10"
+                            },
+                            "resets_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "measured_at": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "date-time",
+                              "description": "When used was measured; null when unavailable."
+                            },
+                            "freshness": {
+                              "type": "string",
+                              "enum": [
+                                "near_real_time",
+                                "delayed",
+                                "unavailable",
+                                "not_applicable"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "status",
+                            "used",
+                            "remaining",
+                            "limit",
+                            "unit",
+                            "accounting_period",
+                            "resets_at",
+                            "measured_at",
+                            "freshness"
+                          ]
+                        },
                         "generation": {
                           "type": "object",
                           "description": "AI image-generation credits (POST /v1/images/generate) for the current month.",
@@ -2806,6 +2917,26 @@
                               "description": "Edit credits left this month (floored at 0)."
                             }
                           }
+                        },
+                        "video_optimization": {
+                          "type": "object",
+                          "description": "Social-ready video source seconds reserved in the current month.",
+                          "properties": {
+                            "seconds_used": {
+                              "type": "integer"
+                            },
+                            "seconds_limit": {
+                              "type": "integer"
+                            },
+                            "seconds_remaining": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "seconds_used",
+                            "seconds_limit",
+                            "seconds_remaining"
+                          ]
                         },
                         "video_enrichment": {
                           "type": "object",
@@ -5548,7 +5679,22 @@
         },
         "responses": {
           "200": {
-            "description": "Signed URL pair"
+            "description": "Expiry-matched signed URLs for every available artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/VideoSignedUrls"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
           },
           "404": {
             "description": "Video not found",

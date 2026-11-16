@@ -242,17 +242,36 @@ describe("images.generate", () => {
 });
 
 describe("usage.get", () => {
-  it("exposes generation credits", async () => {
+  it("exposes credits, video quotas, and honest bandwidth", async () => {
     const f = vi.fn(async () =>
       json({
         data: {
           plan: "free",
           generation: { credits_used: 1, credits_limit: 10, credits_remaining: 9 },
+          video_optimization: {
+            seconds_used: 11,
+            seconds_limit: 120,
+            seconds_remaining: 109,
+          },
+          bandwidth: {
+            status: "unavailable",
+            used: null,
+            remaining: null,
+            limit: 1_073_741_824,
+            unit: "bytes",
+            accounting_period: "2026-11",
+            resets_at: "2026-12-01T00:00:00.000Z",
+            measured_at: null,
+            freshness: "unavailable",
+          },
         },
       }),
     );
     const u = await client(f as unknown as typeof fetch).usage.get();
     expect(u.generation?.credits_remaining).toBe(9);
+    expect(u.video_optimization?.seconds_remaining).toBe(109);
+    expect(u.bandwidth?.used).toBeNull();
+    expect(u.bandwidth?.limit).toBe(1_073_741_824);
   });
 });
 
