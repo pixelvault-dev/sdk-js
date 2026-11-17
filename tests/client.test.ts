@@ -562,6 +562,7 @@ const AUDIO = {
   folder: null,
   collection_id: null,
   metadata: null,
+  enrichment: { status: "not_requested" },
   created_at: "2026-11-16T00:00:00Z",
 };
 
@@ -605,7 +606,13 @@ describe("audio", () => {
         return json({ data: [AUDIO], meta: { total: 1, page: 1, per_page: 20 } });
       }
       if (url.pathname.endsWith("/sign-url")) {
-        return json({ data: { url: "https://signed.example/audio.mp3?sig=x", expires: 123, visibility: "private" } });
+        return json({ data: {
+          url: "https://signed.example/audio.mp3?sig=x",
+          original_url: "https://signed.example/audio.mp3?sig=x",
+          expires: 123,
+          visibility: "private",
+          enrichment: { status: "not_requested" },
+        } });
       }
       return json({ data: AUDIO }, init?.method === "POST" ? 201 : 200);
     });
@@ -635,6 +642,44 @@ describe("audio", () => {
       collection_id: null,
     });
     expect(signed).toMatchObject({ url: "https://signed.example/audio.mp3?sig=x", expires: 123 });
+  });
+
+  it("starts and waits for audio transcription without cancelling on local timeout", async () => {
+    const complete = {
+      ...AUDIO,
+      enrichment: {
+        job_id: "aen_1",
+        status: "complete",
+        transcript: {
+          status: "complete",
+          text_url: "https://img.pixelvault.dev/p/aud_1.transcript.txt",
+        },
+      },
+    };
+    const running = {
+      ...AUDIO,
+      enrichment: { job_id: "aen_1", status: "processing" },
+    };
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ data: running }, 202))
+      .mockResolvedValueOnce(json({ data: complete }))
+      .mockResolvedValueOnce(json({ data: running }));
+    const pv = client(f as unknown as typeof fetch);
+
+    await expect(pv.audio.enrich("aud/1")).resolves.toMatchObject({
+      enrichment: { job_id: "aen_1", status: "processing" },
+    });
+    await expect(pv.audio.waitForEnrichment("aud_1", { timeoutMs: 0 })).resolves.toMatchObject({
+      status: "complete",
+      timedOut: false,
+      audio: { enrichment: { transcript: { text_url: expect.stringContaining(".txt") } } },
+    });
+    await expect(pv.audio.waitForEnrichment("aud_1", { timeoutMs: 0 })).resolves.toMatchObject({
+      status: "processing",
+      timedOut: true,
+    });
+    expect((f.mock.calls[0] as unknown as [URL])[0].pathname).toBe("/v1/audio/aud%2F1/enrich");
   });
 
   it("rejects a direct upload whose content type cannot be inferred", async () => {

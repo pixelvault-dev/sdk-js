@@ -225,7 +225,7 @@ export interface paths {
         };
         /**
          * Get plan, limits and usage
-         * @description Plan, limits and current usage for the calling key's project, so an agent can check quota before work. Storage is cumulative; uploads and credit/second allowances use the current UTC month. `bandwidth` always carries the real limit, units and accounting period, but currently reports `status: unavailable` with null used/remaining values because the CDN's approximate counters are not exposed reliably to this worker. A usage check neither reserves capacity nor guarantees that a future CDN request will serve. Unique-transform usage is also unavailable. Requires a secret key.
+         * @description Plan, limits and current usage for the calling key's project, so an agent can check quota before work. Storage is cumulative; uploads and credit/second allowances use the current UTC month. `video_enrichment` is the shared media-enrichment allowance consumed by video transcript/storyboard jobs and audio transcription jobs. `bandwidth` always carries the real limit, units and accounting period, but currently reports `status: unavailable` with null used/remaining values because the CDN's approximate counters are not exposed reliably to this worker. A usage check neither reserves capacity nor guarantees that a future CDN request will serve. Unique-transform usage is also unavailable. Requires a secret key.
          */
         get: operations["get_usage"];
         put?: never;
@@ -295,7 +295,7 @@ export interface paths {
         put?: never;
         /**
          * Create a webhook endpoint
-         * @description Create a public-HTTPS endpoint for consumer-actionable media lifecycle events: create/delete, AI description completion/failure, export completion/failure, video optimization completion/failure, and video enrichment completion/failure. Synchronous generation and editing failures stay in their API responses; their successful outputs emit `media.created` with `source` `generation` or `edit`. Returns `signing_secret` once. Starter supports 3 endpoints; Pro supports 10; Free receives 402. Delivery is at least once: deduplicate on the stable event `id`; repeated delivery attempts retain that id, while a retried enrichment job has a new `job_id`. PixelVault retries non-2xx/network failures after approximately 1m, 5m, 30m, and 2h. Polling `GET /v1/videos/{id}` remains supported. Private artifact URLs in callbacks expire; call the payload's `refresh_url` to mint a fresh set.
+         * @description Create a public-HTTPS endpoint for consumer-actionable media lifecycle events: create/delete, AI description completion/failure, export completion/failure, video optimization completion/failure, video enrichment completion/failure, and audio enrichment completion/failure. Synchronous generation and editing failures stay in their API responses; their successful outputs emit `media.created` with `source` `generation` or `edit`. Returns `signing_secret` once. Starter supports 3 endpoints; Pro supports 10; Free receives 402. Delivery is at least once: deduplicate on the stable event `id`; repeated delivery attempts retain that id, while a retried enrichment job has a new `job_id`. PixelVault retries non-2xx/network failures after approximately 1m, 5m, 30m, and 2h. Polling `GET /v1/videos/{id}` and `GET /v1/audio/{id}` remains supported. Private artifact URLs in callbacks expire; call the payload's `refresh_url` to mint a fresh set.
          */
         post: operations["create_webhook"];
         delete?: never;
@@ -553,7 +553,7 @@ export interface paths {
         put?: never;
         /**
          * Claim anonymous media into your account
-         * @description Exchange the `claim_token` from POST /v1/playground/upload or POST /v1/playground/video for permanent media in your account. Authenticates with a dashboard session token (JWT), NOT an API key. Idempotent per project: re-claiming returns the media already saved. Valid for 24 hours, after which the temporary upload no longer exists.
+         * @description Exchange the `claim_token` from POST /v1/playground/upload, POST /v1/playground/video, or POST /v1/playground/audio for permanent media in your account. Authenticates with a dashboard session token (JWT), NOT an API key. Idempotent per project: re-claiming returns the media already saved. Valid for 24 hours, after which the temporary upload no longer exists.
          */
         post: operations["claim_upload"];
         delete?: never;
@@ -592,16 +592,36 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get audio metadata and an access URL */
+        /** Get audio metadata, access URL, and transcription status */
         get: operations["get_audio"];
         put?: never;
         post?: never;
-        /** Delete original audio and its metadata */
+        /** Delete original audio, transcript artifacts, and metadata */
         delete: operations["delete_audio"];
         options?: never;
         head?: never;
         /** Replace audio organization fields */
         patch: operations["update_audio"];
+        trace?: never;
+    };
+    "/v1/audio/{id}/enrich": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate transcript artifacts for an audio asset
+         * @description Starts asynchronous speech-to-text for an existing owned audio asset and returns the asset plus a stable job_id immediately. Poll GET /v1/audio/{id}; completed jobs expose text, WebVTT, and timestamped JSON URLs. Repeating this call while pending, processing, or complete returns the same attempt without duplicate work. Calling it after failure creates a new attempt. Sources are limited to 25,000,000 bytes and 10 minutes. This consumes the same monthly media-enrichment seconds reported as video_enrichment by GET /v1/usage. Private artifacts stay private and use expiry-matched signed URLs. Local polling timeout never cancels the server job. Audio enrichment does not create storyboards, summaries, show notes, chapters, or promotional copy.
+         */
+        post: operations["enrich_audio"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/audio/{id}/sign-url": {
@@ -613,7 +633,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mint a fresh audio bearer URL */
+        /** Mint fresh audio and transcript bearer URLs */
         post: operations["sign_audio_url"];
         delete?: never;
         options?: never;
@@ -986,6 +1006,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/playground/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Anonymous temporary audio upload
+         * @description Upload MP3, WAV, M4A, or OGG audio without an account or API key and get a temporary public CDN URL plus a claim token. The container and codec are derived from the file bytes. Limited to 25,000,000 bytes and 3 large-media uploads/hour per IP. Audio is removed within 24 hours unless claimed into a signed-in account.
+         */
+        post: operations["playground_audio_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -1183,6 +1223,38 @@ export interface components {
                 message: string;
             };
         };
+        /** @description State of the optional transcription job. Text, WebVTT, and timestamped JSON artifacts inherit the audio asset's visibility, deletion TTL, and signed-URL expiry. Audio enrichment does not create storyboards. */
+        AudioEnrichment: {
+            /** @enum {string} */
+            status: "not_requested" | "pending" | "processing" | "complete" | "failed";
+            /**
+             * @description Stable identifier for this transcription attempt. Repeated requests while queued, running, or complete return the same job ID; retrying a failed job creates a new one.
+             * @example aen_a1b2c3d4e5f6
+             */
+            job_id?: string;
+            /** Format: date-time */
+            requested_at?: string;
+            /** Format: date-time */
+            completed_at?: string | null;
+            transcript?: {
+                /** @constant */
+                status: "complete";
+                /** Format: uri */
+                text_url?: string;
+                /** Format: uri */
+                vtt_url?: string;
+                /** Format: uri */
+                segments_url?: string;
+                language?: string | null;
+                languages?: string[];
+                model?: string | null;
+                segment_count?: number;
+            } | null;
+            error?: {
+                code: string;
+                message: string;
+            };
+        };
         Video: {
             /** @example vid_a1b2c3d4e5f6 */
             id: string;
@@ -1303,6 +1375,7 @@ export interface components {
             metadata: {
                 [key: string]: unknown;
             } | null;
+            enrichment: components["schemas"]["AudioEnrichment"];
             /** Format: date-time */
             created_at: string;
             /**
@@ -1313,13 +1386,17 @@ export interface components {
             temporary?: boolean;
             /** @description Present and true when an idempotent retry returns the committed asset. */
             replayed?: boolean;
-            /** @description Unix timestamp when the private bearer URL expires. */
+            /** @description Unix timestamp when private original and transcript bearer URLs expire. */
             signed_expires?: number;
         };
+        /** @description Expiry-matched bearer URLs for the original and completed transcript artifacts. Transcript URLs are omitted until they exist. */
         AudioSignedUrl: {
             /** Format: uri */
             url: string;
-            /** @description Unix timestamp when the bearer URL expires. */
+            /** Format: uri */
+            original_url: string;
+            enrichment: components["schemas"]["AudioEnrichment"];
+            /** @description Unix timestamp shared by every bearer URL in this response. */
             expires: number;
             /** @enum {string} */
             visibility: "public" | "private";
@@ -1399,13 +1476,74 @@ export interface components {
                 };
             };
         };
+        /** @description Signed terminal audio transcription event. The event id is stable across delivery retries; job_id identifies one attempt and changes when a failed job is retried. */
+        AudioEnrichmentWebhookEvent: {
+            /**
+             * @description Stable event id. Deduplicate repeated deliveries on this value.
+             * @example whe_a1b2c3d4e5f6
+             */
+            id: string;
+            /** @enum {string} */
+            type: "audio.enrichment.completed" | "audio.enrichment.failed";
+            /** Format: date-time */
+            created_at: string;
+            data: {
+                audio: {
+                    /** @example aud_a1b2c3d4e5f6 */
+                    id: string;
+                    /** @constant */
+                    kind: "audio";
+                    /** Format: uri */
+                    original_url: string;
+                    /** @enum {string} */
+                    visibility: "public" | "private";
+                    /** @description Unix expiry for the private original URL. Omitted for public audio. */
+                    signed_expires?: number;
+                };
+                enrichment: {
+                    /**
+                     * @description Stable identifier for this transcription attempt.
+                     * @example aen_a1b2c3d4e5f6
+                     */
+                    job_id: string;
+                    /** @enum {string} */
+                    status: "complete" | "failed";
+                    /** Format: date-time */
+                    requested_at: string;
+                    /** Format: date-time */
+                    completed_at: string;
+                    /**
+                     * Format: uri
+                     * @description GET this audio asset to poll or inspect current state.
+                     */
+                    status_url: string;
+                    /**
+                     * Format: uri
+                     * @description POST with expires_in to mint fresh private original and transcript URLs.
+                     */
+                    refresh_url: string;
+                    /** @description Unix expiry shared by private transcript URLs. Omitted for public audio. */
+                    signed_expires?: number;
+                    transcript?: {
+                        [key: string]: unknown;
+                    };
+                    /** @description Completed transcript_text, transcript_vtt, and transcript_segments artifacts only. */
+                    artifacts?: components["schemas"]["VideoEnrichmentWebhookArtifact"][];
+                    /** @description Safe code and message. Present only for failed transcription. */
+                    error?: {
+                        code: string;
+                        message: string;
+                    };
+                };
+            };
+        };
         WebhookEndpoint: {
             /** @example whk_a1b2c3d4e5f6 */
             id: string;
             /** Format: uri */
             url: string;
             description: string | null;
-            events: ("media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed")[];
+            events: ("media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed" | "audio.enrichment.completed" | "audio.enrichment.failed")[];
             active: boolean;
             /** Format: date-time */
             created_at: string;
@@ -1418,7 +1556,7 @@ export interface components {
             /** @example whe_a1b2c3d4e5f6 */
             event_id: string;
             /** @enum {string} */
-            event: "media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed";
+            event: "media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed" | "audio.enrichment.completed" | "audio.enrichment.failed";
             /** @enum {string} */
             status: "pending" | "delivering" | "retrying" | "delivered" | "failed" | "skipped";
             attempts: number;
@@ -2579,7 +2717,7 @@ export interface operations {
                                 seconds_limit: number;
                                 seconds_remaining: number;
                             };
-                            /** @description Transcript + storyboard source seconds reserved in the current month. */
+                            /** @description Shared media-enrichment source seconds reserved by video transcript/storyboard and audio transcription jobs in the current month. */
                             video_enrichment?: {
                                 seconds_used: number;
                                 seconds_limit: number;
@@ -2922,10 +3060,12 @@ export interface operations {
                      *       "video.optimization.completed",
                      *       "video.optimization.failed",
                      *       "video.enrichment.completed",
-                     *       "video.enrichment.failed"
+                     *       "video.enrichment.failed",
+                     *       "audio.enrichment.completed",
+                     *       "audio.enrichment.failed"
                      *     ]
                      */
-                    events?: ("media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed")[];
+                    events?: ("media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed" | "audio.enrichment.completed" | "audio.enrichment.failed")[];
                 };
             };
         };
@@ -3017,7 +3157,7 @@ export interface operations {
                     /** Format: uri */
                     url?: string;
                     description?: string | null;
-                    events?: ("media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed")[];
+                    events?: ("media.created" | "media.deleted" | "image.description.completed" | "image.description.failed" | "export.completed" | "export.failed" | "video.optimization.completed" | "video.optimization.failed" | "video.enrichment.completed" | "video.enrichment.failed" | "audio.enrichment.completed" | "audio.enrichment.failed")[];
                     active?: boolean;
                 };
             };
@@ -3998,6 +4138,76 @@ export interface operations {
             };
             /** @description Collection visibility does not match the asset */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    enrich_audio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Transcription already complete */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Audio"];
+                    };
+                };
+            };
+            /** @description Transcription queued or processing */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Audio"];
+                    };
+                };
+            };
+            /** @description Shared monthly media-enrichment allowance exhausted */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Audio asset not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Audio source exceeds 25,000,000 bytes */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Duration is unavailable, invalid, or longer than 10 minutes */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Audio transcription is temporarily unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5374,6 +5584,112 @@ export interface operations {
                 };
             };
             /** @description Content-Type is not video/mp4 */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    playground_audio_upload: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Original filename. Its extension, when recognized, must match the uploaded container. */
+                "X-PixelVault-Filename"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "audio/mpeg": string;
+                "audio/wav": string;
+                "audio/mp4": string;
+                "audio/ogg": string;
+            };
+        };
+        responses: {
+            /** @description Temporary audio uploaded */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: {
+                            /** @example tmp_a1b2c3d4e5f6 */
+                            id?: string;
+                            /** @constant */
+                            kind?: "audio";
+                            /** Format: uri */
+                            url?: string;
+                            /** Format: uri */
+                            original_url?: string;
+                            /** @enum {string} */
+                            mime_type?: "audio/mpeg" | "audio/wav" | "audio/mp4" | "audio/ogg";
+                            /** @example 834 */
+                            size?: number;
+                            /** @enum {string} */
+                            container?: "mp3" | "wav" | "m4a" | "ogg";
+                            /** @example mp3 */
+                            codec?: string;
+                            /** @example 1.25 */
+                            duration_seconds?: number;
+                            /** @example 44100 */
+                            sample_rate?: number;
+                            /** @example 2 */
+                            channels?: number;
+                            /** @example 86400 */
+                            expires_in?: number;
+                            /** @description Exchange at POST /v1/claim within 24 hours to keep the audio. */
+                            claim_token?: string;
+                            /** @example 86400 */
+                            claim_expires_in?: number;
+                        };
+                    };
+                };
+            };
+            /** @description Invalid audio or conflicting container metadata */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Content-Length missing or invalid */
+            411: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description File exceeds the 25,000,000-byte temporary limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Content-Type is not a supported audio type */
             415: {
                 headers: {
                     [name: string]: unknown;
