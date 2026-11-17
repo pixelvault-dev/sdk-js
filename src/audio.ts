@@ -5,6 +5,27 @@ export type AudioContainer = "mp3" | "wav" | "m4a" | "ogg";
 export type AudioCodec = "mp3" | "pcm" | "pcm_float" | "aac" | "opus" | "vorbis";
 export type AudioContentType = "audio/mpeg" | "audio/wav" | "audio/mp4" | "audio/ogg";
 export type AudioFileInput = Blob | ArrayBuffer | Uint8Array;
+export type AudioEnrichmentStatus = "not_requested" | "pending" | "processing" | "complete" | "failed";
+
+export interface AudioTranscript {
+  status: "complete";
+  text_url?: string;
+  vtt_url?: string;
+  segments_url?: string;
+  language?: string | null;
+  languages?: string[];
+  model?: string | null;
+  segment_count?: number;
+}
+
+export interface AudioEnrichment {
+  job_id?: string;
+  status: AudioEnrichmentStatus;
+  requested_at?: string;
+  completed_at?: string | null;
+  transcript?: AudioTranscript | null;
+  error?: { code: string; message: string };
+}
 
 const AUDIO_MAX_BYTES = 25_000_000;
 
@@ -25,6 +46,7 @@ export interface Audio {
   folder: string | null;
   collection_id: string | null;
   metadata: Record<string, unknown> | null;
+  enrichment: AudioEnrichment;
   created_at: string;
   expires_at?: string;
   temporary?: true;
@@ -83,8 +105,23 @@ export interface UpdateAudioInput {
 
 export interface AudioSignedUrl {
   url: string;
+  original_url: string;
   expires: number;
   visibility: AudioVisibility;
+  enrichment: AudioEnrichment;
+}
+
+export interface AudioWaitOptions {
+  timeoutMs?: number;
+  initialIntervalMs?: number;
+  maxIntervalMs?: number;
+  signal?: AbortSignal;
+}
+
+export interface AudioWaitResult {
+  audio: Audio;
+  status: AudioEnrichmentStatus;
+  timedOut: boolean;
 }
 
 function canonicalContentType(value: string | undefined): AudioContentType | undefined {
@@ -133,6 +170,20 @@ async function sha256(blob: Blob): Promise<string> {
   let result = "";
   for (const byte of new Uint8Array(digest)) result += byte.toString(16).padStart(2, "0");
   return result;
+}
+
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason ?? new Error("aborted"));
+      },
+      { once: true },
+    );
+  });
 }
 
 function lifecycleJson(input: AudioLifecycleOptions): Record<string, unknown> {
@@ -260,5 +311,35 @@ export class AudioResource {
       signal: opts.signal,
     });
     return response.data;
+  }
+  /** Start or resume transcription. Pending, processing, and complete jobs are reused. */
+  async enrich(id: string, opts: { signal?: AbortSignal } = {}): Promise<Audio> {
+    const response = await request<{ data: Audio }>(this.cfg, {
+      method: "POST",
+      path: `/v1/audio/${encodeURIComponent(id)}/enrich`,
+      signal: opts.signal,
+    });
+    return response.data;
+  }
+
+  /**
+   * Poll until transcription completes or fails. A local timeout does not cancel the server job.
+   * Reuse the same asset ID to resume.
+   */
+  async waitForEnrichment(id: string, opts: AudioWaitOptions = {}): Promise<AudioWaitResult> {
+    const deadline = Date.now() + (opts.timeoutMs ?? 600_000);
+    const maxInterval = opts.maxIntervalMs ?? 5_000;
+    let interval = opts.initialIntervalMs ?? 1_000;
+    for (;;) {
+      const audio = await this.get(id, { signal: opts.signal });
+      const status = audio.enrichment.status;
+      if (status !== "pending" && status !== "processing") {
+        return { audio, status, timedOut: false };
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return { audio, status, timedOut: true };
+      await sleep(Math.min(interval, remaining), opts.signal);
+      interval = Math.min(Math.ceil(interval * 1.5), maxInterval);
+    }
   }
 }

@@ -38,7 +38,7 @@ const result = await pv.videos.waitForEnrichment(video.id, { timeoutMs: 10 * 60_
 console.log(result.video.original_url);
 console.log(result.video.enrichment.transcript, result.video.enrichment.storyboard);
 
-// Host original audio bytes; actual container/codec bytes are validated
+// Host and transcribe audio; actual container/codec bytes are validated
 const audio = await pv.audio.upload({
   file: audioBytes,
   filename: "episode.m4a",
@@ -47,8 +47,13 @@ const audio = await pv.audio.upload({
   expiresIn: 604800,
   idempotencyKey: crypto.randomUUID(),
 });
-console.log(audio.id, audio.url, audio.codec, audio.duration_seconds);
+const started = await pv.audio.enrich(audio.id);
+console.log(started.id, started.enrichment.job_id);
+const audioResult = await pv.audio.waitForEnrichment(audio.id, { timeoutMs: 600_000 });
+if (audioResult.timedOut) console.log("Resume later with", audio.id);
+else if (audioResult.status === "complete") console.log(audioResult.audio.enrichment.transcript);
 const fresh = await pv.audio.signUrl(audio.id, { expiresIn: 3600 });
+console.log(fresh.original_url, fresh.enrichment.transcript);
 ```
 
 `apiKey` falls back to the `PIXELVAULT_API_KEY` environment variable. With no key at all, `images.upload({ file })`
@@ -75,18 +80,21 @@ makes an anonymous upload that expires after 30 days.
 | `pv.videos.optimize(id)` / `.enrich(id)` | Start asynchronous social optimization or transcript/storyboard enrichment |
 | `pv.videos.waitForOptimization(id, ...)` / `.waitForEnrichment(id, ...)` | Bounded polling with backoff; returns `{ video, status, timedOut }` and never cancels the server job |
 | `pv.audio.upload({ file \| url, ... })` | Host original MP3, PCM/float WAV, AAC M4A, or Opus/Vorbis OGG with privacy, TTL, metadata, organization, and retry safety |
-| `pv.audio.get(id)` / `.list(...)` / `.listAll(...)` / `.delete(id)` | Audio discovery and lifecycle by stable `aud_` ID |
-| `pv.audio.update(id, { metadata?, folder?, collectionId? })` / `.signUrl(id, ...)` | Replace organization fields or mint a fresh private original URL |
+| `pv.audio.enrich(id)` / `.waitForEnrichment(id, ...)` | Start/resume transcription and poll with bounded backoff for text, WebVTT, and timestamped JSON; local timeout never cancels the job |
+| `pv.audio.get(id)` / `.list(...)` / `.listAll(...)` / `.delete(id)` | Audio and transcript discovery/lifecycle by stable `aud_` ID |
+| `pv.audio.update(id, { metadata?, folder?, collectionId? })` / `.signUrl(id, ...)` | Replace organization fields or mint fresh private original/transcript URLs |
 | `pv.exports.start()` / `.wait(jobId)` / `.download(jobId)` | Owner-authenticated tar export of non-expired images, videos, available derivatives and `manifest.json` relationships |
 | `pv.usage.get()` | Plan, usage, limits and what is left this month (including generation credits) |
 | `pv.keys.list()` / `.create({ label?, environment? })` / `.revoke(id)` | Manage your API keys (secret keys only) |
 | `pv.register({ email })` | Create an account, returns a first key once |
 | `pv.deviceLoginStart({ email })` + `pv.deviceLoginComplete({ email, code })` | Passwordless key minting |
 
-Every call accepts an optional `signal` (`AbortSignal`). Audio originals have an approved global maximum of
-25,000,000 bytes; this is not a plan allowance. The API validates actual bytes and preserves the original without
-transcoding. Audio editing, conversion, streaming manifests, and transcription are intentionally unsupported.
-Video waits are bounded locally; `timedOut: true` means polling stopped, not that the server job was cancelled.
+Every call accepts an optional `signal` (`AbortSignal`). Audio originals and enrichment sources have an approved
+global maximum of 25,000,000 bytes; enrichment additionally accepts up to 10 minutes. The file ceiling is not a
+plan allowance. The API validates actual bytes and preserves the original without transcoding. Audio and video
+enrichment share the existing plan allowance. Audio editing, conversion, streaming manifests, summaries, chapters,
+show notes, promo copy, and storyboards remain unsupported. Audio and video waits are bounded locally;
+`timedOut: true` means polling stopped, not that the server job was cancelled.
 Image URLs support on-the-fly transforms through query parameters (`?w=800&fmt=auto`), see the
 [docs](https://pixelvault.dev/docs).
 

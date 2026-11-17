@@ -46,6 +46,9 @@ export type {
 } from "./videos.js";
 export type {
   Audio,
+  AudioEnrichment,
+  AudioEnrichmentStatus,
+  AudioTranscript,
   AudioCodec,
   AudioContainer,
   AudioContentType,
@@ -59,6 +62,8 @@ export type {
   ImportAudioInput,
   UpdateAudioInput,
   UploadAudioFileInput,
+  AudioWaitOptions,
+  AudioWaitResult,
 } from "./audio.js";
 export type {
   ExportJob,
