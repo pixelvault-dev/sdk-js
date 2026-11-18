@@ -3,9 +3,10 @@ import { request, type HttpConfig } from "./http.js";
 import { VideosResource } from "./videos.js";
 import { AudioResource } from "./audio.js";
 import { ExportsResource } from "./exports.js";
+import { CustomDomainsResource } from "./custom-domains.js";
 import type { components, operations } from "./generated/schema.js";
 
-export type Image = components["schemas"]["Image"];
+export type Image = components["schemas"]["Image"] & { branded_url?: string };
 
 type Ok<Op extends keyof operations, Code extends number> = operations[Op] extends {
   responses: Record<Code, { content: { "application/json": infer R } }>;
@@ -16,7 +17,7 @@ type Ok<Op extends keyof operations, Code extends number> = operations[Op] exten
 export type Usage = NonNullable<Ok<"get_usage", 200>["data"]>;
 export type ApiKey = NonNullable<Ok<"list_keys", 200>["data"]>[number];
 export type CreatedKey = NonNullable<Ok<"create_key", 201>["data"]>;
-export type SignedUrl = NonNullable<Ok<"sign_image_url", 200>["data"]>;
+export type SignedUrl = NonNullable<Ok<"sign_image_url", 200>["data"]> & { branded_url?: string };
 export type ListMeta = NonNullable<Ok<"list_images", 200>["meta"]>;
 export type DeviceLoginResult = NonNullable<Ok<"device_login_complete", 200>["data"]>;
 export type RegisteredAccount = NonNullable<Ok<"register_account", 201>["data"]>;
@@ -166,6 +167,7 @@ export class PixelVault {
   readonly exports: ExportsResource;
   readonly usage: UsageResource;
   readonly keys: KeysResource;
+  readonly customDomains: CustomDomainsResource;
 
   constructor(options: ClientOptions = {}) {
     this.cfg = {
@@ -181,6 +183,7 @@ export class PixelVault {
     this.exports = new ExportsResource(this.cfg);
     this.usage = new UsageResource(this.cfg);
     this.keys = new KeysResource(this.cfg);
+    this.customDomains = new CustomDomainsResource(this.cfg);
   }
 
   /**

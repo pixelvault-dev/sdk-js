@@ -34,6 +34,7 @@ export interface Audio {
   kind: "audio";
   url: string;
   original_url: string;
+  branded_url?: string;
   visibility: AudioVisibility;
   mime_type: AudioContentType;
   size: number;
@@ -105,6 +106,7 @@ export interface UpdateAudioInput {
 
 export interface AudioSignedUrl {
   url: string;
+  branded_url?: string;
   original_url: string;
   expires: number;
   visibility: AudioVisibility;

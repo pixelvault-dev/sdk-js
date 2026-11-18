@@ -1,7 +1,7 @@
 import { request, type HttpConfig } from "./http.js";
 import type { components } from "./generated/schema.js";
 
-export type Video = components["schemas"]["Video"];
+export type Video = components["schemas"]["Video"] & { branded_url?: string };
 export type VideoVisibility = "public" | "private";
 export type VideoJob = "enrichment" | "optimization";
 export type VideoJobStatus =
@@ -112,6 +112,7 @@ export interface VideoWaitResult {
 
 export interface VideoSignedUrls {
   url: string;
+  branded_url?: string;
   poster_url?: string;
   social_url?: string;
   enrichment: Video["enrichment"];

@@ -16,7 +16,7 @@ const pv = new PixelVault({ apiKey: process.env.PIXELVAULT_API_KEY });
 
 // Bytes (Buffer, Uint8Array, Blob/File)
 const image = await pv.images.upload({ file: bytes, filename: "shot.png", contentType: "image/png" });
-console.log(image.url); // https://img.pixelvault.dev/...
+console.log(image.branded_url ?? image.url); // custom domain when ready, canonical fallback
 
 // Import from a URL, auto-delete after one hour
 await pv.images.upload({ url: "https://example.com/a.png", expiresIn: 3600 });
@@ -86,6 +86,7 @@ makes an anonymous upload that expires after 30 days.
 | `pv.exports.start()` / `.wait(jobId)` / `.download(jobId)` | Owner-authenticated tar export of non-expired images, videos, available derivatives and `manifest.json` relationships |
 | `pv.usage.get()` | Plan, usage, limits and what is left this month (including generation credits) |
 | `pv.keys.list()` / `.create({ label?, environment? })` / `.revoke(id)` | Manage your API keys (secret keys only) |
+| `pv.customDomains.list()` / `.create(hostname)` / `.refresh(id)` / `.delete(id)` | Manage the active project's custom domains and inspect account plan capacity |
 | `pv.register({ email })` | Create an account, returns a first key once |
 | `pv.deviceLoginStart({ email })` + `pv.deviceLoginComplete({ email, code })` | Passwordless key minting |
 
@@ -97,6 +98,8 @@ show notes, promo copy, and storyboards remain unsupported. Audio and video wait
 `timedOut: true` means polling stopped, not that the server job was cancelled.
 Image URLs support on-the-fly transforms through query parameters (`?w=800&fmt=auto`), see the
 [docs](https://pixelvault.dev/docs).
+
+Media responses retain canonical `url` and include optional `branded_url` when the active project has a ready custom domain. Use the returned branded value; signed and transform query parameters are preserved.
 
 ## Errors and retries
 

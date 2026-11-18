@@ -701,6 +701,43 @@ describe("audio", () => {
   });
 });
 
+describe("customDomains", () => {
+  it("lists capacity and manages encoded domain ids", async () => {
+    const domain = {
+      id: "dom/1",
+      project_id: "proj_1",
+      hostname: "media.example.com",
+      status: "active",
+      hostname_status: "active",
+      certificate_status: "active",
+      ready: true,
+      cname_target: "custom.pvcdn.dev",
+      ownership_verification: null,
+      created_at: "2026-11-18T00:00:00Z",
+      updated_at: "2026-11-18T00:00:00Z",
+    };
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ data: [domain], meta: { limit: 1, total: 1, project_total: 1, cname_target: "custom.pvcdn.dev" } }))
+      .mockResolvedValueOnce(json({ data: domain }, 201))
+      .mockResolvedValueOnce(json({ data: domain }))
+      .mockResolvedValueOnce(json({ data: { id: "dom/1", deleted: true } }));
+    const domains = client(f as unknown as typeof fetch).customDomains;
+
+    await expect(domains.list()).resolves.toMatchObject({ meta: { limit: 1 }, data: [{ ready: true }] });
+    await expect(domains.create("media.example.com")).resolves.toMatchObject({ hostname: "media.example.com" });
+    await expect(domains.refresh("dom/1")).resolves.toMatchObject({ ready: true });
+    await expect(domains.delete("dom/1")).resolves.toBeUndefined();
+
+    expect((f.mock.calls[1] as unknown as [URL, RequestInit])[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ hostname: "media.example.com" }),
+    });
+    expect((f.mock.calls[2] as unknown as [URL])[0].pathname).toBe("/v1/custom-domains/dom%2F1/refresh");
+    expect((f.mock.calls[3] as unknown as [URL])[0].pathname).toBe("/v1/custom-domains/dom%2F1");
+  });
+});
+
 describe("exports", () => {
   it("starts, waits for, and downloads media exports as bytes", async () => {
     const f = vi
