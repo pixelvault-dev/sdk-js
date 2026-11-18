@@ -112,6 +112,7 @@ export interface VideoWaitResult {
 
 export interface VideoSignedUrls {
   url: string;
+  branded_url?: string;
   poster_url?: string;
   social_url?: string;
   enrichment: Video["enrichment"];

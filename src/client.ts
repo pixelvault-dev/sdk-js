@@ -3,6 +3,7 @@ import { request, type HttpConfig } from "./http.js";
 import { VideosResource } from "./videos.js";
 import { AudioResource } from "./audio.js";
 import { ExportsResource } from "./exports.js";
+import { CustomDomainsResource } from "./custom-domains.js";
 import type { components, operations } from "./generated/schema.js";
 
 export type Image = components["schemas"]["Image"];
@@ -166,6 +167,7 @@ export class PixelVault {
   readonly exports: ExportsResource;
   readonly usage: UsageResource;
   readonly keys: KeysResource;
+  readonly customDomains: CustomDomainsResource;
 
   constructor(options: ClientOptions = {}) {
     this.cfg = {
@@ -181,6 +183,7 @@ export class PixelVault {
     this.exports = new ExportsResource(this.cfg);
     this.usage = new UsageResource(this.cfg);
     this.keys = new KeysResource(this.cfg);
+    this.customDomains = new CustomDomainsResource(this.cfg);
   }
 
   /**

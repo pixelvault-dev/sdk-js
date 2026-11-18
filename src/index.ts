@@ -2,6 +2,7 @@ export { PixelVault, PixelVaultError } from "./client.js";
 export { VideosResource } from "./videos.js";
 export { AudioResource } from "./audio.js";
 export { ExportsResource } from "./exports.js";
+export { CustomDomainsResource } from "./custom-domains.js";
 export type {
   ApiKey,
   BatchResult,
@@ -22,6 +23,11 @@ export type {
   UploadUrlInput,
   Usage,
 } from "./client.js";
+export type {
+  CustomDomain,
+  CustomDomainCapacity,
+  CustomDomainVerification,
+} from "./custom-domains.js";
 export { VERSION } from "./http.js";
 export type {
   CreateVideoUploadInput,
