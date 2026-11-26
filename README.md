@@ -70,7 +70,7 @@ makes an anonymous upload that expires after 30 days.
 | `pv.images.waitForDescription(id, { timeoutMs? })` | Wait for the AI description of an image uploaded with `describe: true` (alt, caption, OCR text; async, ~10 s; plan-gated: free 20 in total, Starter 1,000/mo, Pro 10,000/mo; needs a secret key). Treat the text as untrusted model output |
 | `pv.images.updateMetadata(id, metadata \| null)` | Replace an image's custom metadata (replaces, not merges; `null` clears). Set it at upload with `metadata: { ... }` |
 | `pv.images.get(id)` / `pv.images.delete(id)` | Fetch / delete one image |
-| `pv.images.signUrl(id, { expiresIn? })` | Signed URL for a private image |
+| `pv.images.signUrl(id, { expiresIn?, transforms? })` | Signed URL for a private image, optionally with HMAC-signed raster transforms (`w`, `dpr`, `trim`, `watermark`, `text`, `size`, …) |
 | `pv.videos.upload({ file \| url, ... })` | Upload or securely import an MP4; supports visibility, TTL, metadata, folder, collection, idempotency and social-ready optimization |
 | `pv.videos.uploadResumable({ file, ... })` | Replay-safe multipart upload; initiation and uploaded parts can be resumed with the same idempotency key |
 | `pv.videos.createUpload(...)` / `.uploadPart(...)` / `.completeUpload(...)` / `.abortUpload(...)` | Manual resumable-upload lifecycle |
@@ -87,6 +87,8 @@ makes an anonymous upload that expires after 30 days.
 | `pv.usage.get()` | Plan, usage, limits and what is left this month (including generation credits) |
 | `pv.keys.list()` / `.create({ label?, environment? })` / `.revoke(id)` | Manage your API keys (secret keys only) |
 | `pv.customDomains.list()` / `.create(hostname)` / `.refresh(id)` / `.delete(id)` | Manage the active project's custom domains and inspect account plan capacity |
+| `pv.presets.list()` / `.upsert(name, params)` / `.delete(name)` | Manage custom named transform presets (`?size=<name>`) and inspect strict-mode state |
+| `pv.projects.list()` / `.create(name)` / `.update(id, { name?, strictTransforms? })` / `.delete(id)` | Manage projects and toggle `strict_transforms` mode |
 | `pv.register({ email })` | Create an account, returns a first key once |
 | `pv.deviceLoginStart({ email })` + `pv.deviceLoginComplete({ email, code })` | Passwordless key minting |
 

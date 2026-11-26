@@ -3,7 +3,7 @@
   "info": {
     "title": "PixelVault API",
     "version": "1.0.0",
-    "description": "Agent-first media hosting API for images, PDF documents, original MP4 video, and original MP3/WAV/M4A/OGG audio. Upload media via API and get CDN URLs. PDFs are download attachments; audio is stored and served byte-for-byte with HTTP range support. Free tier: 200 MB storage, 500 uploads/month, 1 GB bandwidth/month.",
+    "description": "Agent-first media hosting API for images, PDF documents, original MP4 video, and original MP3/WAV/M4A/OGG audio. Upload media via API and get CDN URLs. PDFs are download attachments; audio is stored and served byte-for-byte with HTTP range support. Free tier: 200 MB storage, 500 uploads/month, 1 GB bandwidth/month.\n\nRate limits: rate-limited routes send the IETF RateLimit header fields (draft-ietf-httpapi-ratelimit-headers). `RateLimit-Policy` names each quota that applies to the request (`\"key\";q=60;w=60` is 60 requests per 60 seconds; keyed routes send it even on a 401). Where the counter is tracked, `RateLimit` reports what is left (`\"export\";r=9;t=3540` is 9 requests left, resetting in 3540 seconds). Every 429 carries `Retry-After` in seconds, except `account_budget_exceeded` (a spend breaker with no predictable end; back off). Per-route limits: https://pixelvault.dev/docs/limits/.\n\nVersioning: the major version is in the path (`/v1`). Within a major version changes are additive only: new endpoints, optional parameters, response fields, error codes and enum values, so clients must ignore fields they do not know. A breaking change ships under a new path version (`/v2`) while the old one keeps running. `info.version` versions this document.\n\nDeprecation policy: nothing is removed silently. When an endpoint, parameter or API version is scheduled for removal, its operation is marked `deprecated: true` in this spec, the change is announced at https://pixelvault.dev/changelog/, and its responses carry a `Deprecation` header (RFC 9745) from that day, a `Sunset` header (RFC 8594) with the removal date, and a `Link` header with `rel=\"deprecation\"` pointing at migration notes. The Sunset date is at least 90 days after the Deprecation header first appears. No endpoint is deprecated today. Policy: https://pixelvault.dev/docs/api/#versioning.",
     "contact": {
       "email": "support@pixelvault.dev"
     }
@@ -44,8 +44,16 @@
       "description": "Isolate media, API keys, usage, webhooks and idempotency keys inside one account. Free includes 1 project, Starter 3 and Pro 10."
     },
     {
+      "name": "Transform Presets",
+      "description": "Per-project custom named transform presets referenced via `?size=<name>`. Free includes 5 presets per project, Starter 25 and Pro 100. Combine with project `strict_transforms` to restrict CDN delivery to declared presets only."
+    },
+    {
       "name": "Custom Domains",
       "description": "Serve one project's media from a customer-owned hostname. Starter includes 1 hostname per account and Pro 3. Add the CNAME target returned by the API; Cloudflare provisions and renews HTTPS automatically."
+    },
+    {
+      "name": "Share Links",
+      "description": "Password-protected links to one private image or MP4 video, for Starter and Pro projects. The link (pixelvault.dev/s/{id}) opens a page that asks for the password and then shows the media through a short-lived signed URL. Links expire after 1 hour to 90 days (default 7 days) and can be revoked at any time."
     },
     {
       "name": "API Keys",
@@ -94,6 +102,44 @@
         "description": "Dashboard session token, issued by POST /v1/auth/login. Used by endpoints a signed-in person drives from the web app, including media uploads and management."
       }
     },
+    "headers": {
+      "Retry-After": {
+        "description": "Seconds to wait before retrying a 429. Never earlier than the reset of the `RateLimit` item that refused the request.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "example": 60
+      },
+      "RateLimit": {
+        "description": "IETF RateLimit field (draft-ietf-httpapi-ratelimit-headers): one item per tracked quota, `r` = requests left in the window, `t` = seconds until it resets. Sent where the remaining count is known, and always with `r=0` on a 429.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "\"export\";r=9;t=3540"
+      },
+      "RateLimit-Policy": {
+        "description": "IETF RateLimit-Policy field: one item per quota that applies to the request, `q` = requests allowed, `w` = window in seconds.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "\"key\";q=60;w=60, \"project\";q=300;w=60"
+      },
+      "Deprecation": {
+        "description": "RFC 9745: present only once the endpoint is deprecated, as the Unix time the deprecation took effect (`@1798761600` is 2027-01-01). Not sent by any endpoint today.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "@1798761600"
+      },
+      "Sunset": {
+        "description": "RFC 8594: present only once a removal date is set, as the HTTP-date after which the endpoint stops answering; at least 90 days after `Deprecation` first appeared. Not sent by any endpoint today.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "Thu, 01 Apr 2027 00:00:00 GMT"
+      }
+    },
     "schemas": {
       "DashboardDescription": {
         "type": "object",
@@ -127,6 +173,85 @@
               "harbour",
               "sunset"
             ]
+          }
+        }
+      },
+      "DashboardUpload": {
+        "type": "object",
+        "description": "One image, PDF, video or audio file as the dashboard's media list shows it.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "img_abc123"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "CDN URL; a short-lived signed URL for private files.",
+            "example": "https://img.pixelvault.dev/proj_xyz789/img_abc123.png"
+          },
+          "branded_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Same asset on the project's active custom domain; omitted when none is ready.",
+            "example": "https://media.example.com/img_abc123.png"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "image",
+              "document",
+              "video",
+              "audio"
+            ],
+            "example": "image"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "example": "public"
+          },
+          "filename": {
+            "type": "string",
+            "example": "screenshot.png"
+          },
+          "mime_type": {
+            "type": "string",
+            "example": "image/png"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "example": 51234
+          },
+          "width": {
+            "type": "integer",
+            "nullable": true,
+            "example": 1280
+          },
+          "height": {
+            "type": "integer",
+            "nullable": true,
+            "example": 720
+          },
+          "project_id": {
+            "type": "string",
+            "example": "proj_xyz789"
+          },
+          "folder": {
+            "type": "string",
+            "nullable": true,
+            "example": null
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-11-16T12:00:00.000Z"
+          },
+          "description": {
+            "$ref": "#/components/schemas/DashboardDescription"
           }
         }
       },
@@ -247,9 +372,316 @@
           "updated_at"
         ]
       },
+      "TransformParams": {
+        "type": "object",
+        "description": "On-the-fly image transform parameters (subset of `serve_image` query parameters).",
+        "properties": {
+          "size": {
+            "type": "string",
+            "description": "Named preset (built-in or custom). Allowed on `sign_image_url`, disallowed inside custom preset definitions.",
+            "example": "avatar"
+          },
+          "w": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4000,
+            "example": 400
+          },
+          "h": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4000,
+            "example": 400
+          },
+          "fit": {
+            "type": "string",
+            "enum": [
+              "scale-down",
+              "contain",
+              "cover",
+              "crop",
+              "pad"
+            ],
+            "example": "cover"
+          },
+          "fmt": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "webp",
+              "avif",
+              "jpg",
+              "png"
+            ],
+            "example": "auto"
+          },
+          "q": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "60",
+              "75",
+              "85"
+            ],
+            "example": "85"
+          },
+          "dpr": {
+            "type": "string",
+            "description": "Device pixel ratio multiplier (1, 1.5, or 2; requires w/h).",
+            "example": "2"
+          },
+          "trim": {
+            "type": "string",
+            "enum": [
+              "border",
+              "auto"
+            ],
+            "description": "Auto-trim uniform outer borders."
+          },
+          "anim": {
+            "type": "string",
+            "enum": [
+              "false",
+              "true"
+            ],
+            "description": "Set `false` to flatten animated GIF/WebP to the first frame."
+          },
+          "metadata": {
+            "type": "string",
+            "enum": [
+              "none",
+              "copyright",
+              "keep"
+            ],
+            "description": "EXIF/copyright/C2PA metadata handling."
+          },
+          "segment": {
+            "type": "string",
+            "enum": [
+              "foreground"
+            ]
+          },
+          "background": {
+            "type": "string",
+            "example": "white"
+          },
+          "gravity": {
+            "type": "string",
+            "example": "face"
+          },
+          "zoom": {
+            "type": "string",
+            "example": "0.7"
+          },
+          "blur": {
+            "type": "string",
+            "example": "30"
+          },
+          "sharpen": {
+            "type": "string",
+            "example": "1"
+          },
+          "rotate": {
+            "type": "string",
+            "example": "90"
+          },
+          "flip": {
+            "type": "string",
+            "enum": [
+              "h",
+              "v",
+              "hv"
+            ]
+          },
+          "brightness": {
+            "type": "string",
+            "example": "1.25"
+          },
+          "contrast": {
+            "type": "string",
+            "example": "1.25"
+          },
+          "saturation": {
+            "type": "string",
+            "example": "0"
+          },
+          "tile": {
+            "type": "string",
+            "description": "Public same-project raster image path to tile as a watermark.",
+            "example": "img_logo.png"
+          },
+          "watermark": {
+            "type": "string",
+            "description": "Public same-project raster image path for a single positioned watermark.",
+            "example": "img_logo.png"
+          },
+          "watermark_pos": {
+            "type": "string",
+            "enum": [
+              "bottom-right",
+              "bottom-left",
+              "top-right",
+              "top-left",
+              "center"
+            ],
+            "example": "bottom-right"
+          },
+          "watermark_opacity": {
+            "type": "string",
+            "description": "Snapped to 0.25/0.5/0.75/1.",
+            "example": "0.75"
+          },
+          "watermark_width": {
+            "type": "string",
+            "description": "Target width in px (snapped up to 32..512).",
+            "example": "128"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Text overlay string.",
+            "example": "SAMPLE"
+          },
+          "text_color": {
+            "type": "string",
+            "example": "#ffffff"
+          },
+          "text_size": {
+            "type": "string",
+            "description": "Font size in px (snapped to 16..128).",
+            "example": "32"
+          },
+          "text_pos": {
+            "type": "string",
+            "enum": [
+              "bottom-right",
+              "bottom-left",
+              "top-right",
+              "top-left",
+              "center"
+            ],
+            "example": "bottom-right"
+          },
+          "text_opacity": {
+            "type": "string",
+            "description": "Snapped to 0.25/0.5/0.75/1.",
+            "example": "0.75"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TransformPreset": {
+        "type": "object",
+        "description": "A project-scoped custom named transform preset usable via `?size=<name>`.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{1,39}$",
+            "example": "avatar"
+          },
+          "params": {
+            "$ref": "#/components/schemas/TransformParams"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "name",
+          "params",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "ShareLink": {
+        "type": "object",
+        "description": "A password-protected link to one private image or MP4 video. The password is never returned.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Share-link id (`shr_` prefix).",
+            "example": "shr_abc123def456"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The page to send the recipient. Send the password separately.",
+            "example": "https://pixelvault.dev/s/shr_abc123def456"
+          },
+          "asset_id": {
+            "type": "string",
+            "description": "The shared image (`img_`) or video (`vid_`).",
+            "example": "img_abc123def456"
+          },
+          "asset_kind": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video"
+            ],
+            "example": "image"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "expired",
+              "revoked"
+            ],
+            "description": "`revoked` once revoked, else `expired` once `expires_at` has passed, else `active`.",
+            "example": "active"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-11-29T12:00:00.000Z"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "example": null
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-11-22T12:00:00.000Z"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "api",
+              "dashboard",
+              "mcp",
+              "cli"
+            ],
+            "description": "Where the link was created.",
+            "example": "api"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "asset_id",
+          "asset_kind",
+          "status",
+          "expires_at",
+          "revoked_at",
+          "created_at",
+          "origin"
+        ]
+      },
       "Image": {
         "type": "object",
-        "description": "A hosted image or PDF document. Upload responses (`upload_image`, `generate_image`, `edit_image`) also carry `visibility` and, for private images, `signed_expires` (Unix seconds when the signed `url` stops working).",
+        "description": "A hosted image or PDF document. Upload responses (`upload_image`, `generate_image`, `edit_image`) and `update_image_metadata` also carry `visibility` and, for private images, `signed_expires` (Unix seconds when the signed `url` stops working).",
         "properties": {
           "id": {
             "type": "string",
@@ -2295,6 +2727,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -2378,6 +2821,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           },
@@ -2511,6 +2965,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           },
@@ -2783,6 +3248,27 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          },
+          "503": {
+            "description": "`temporarily_unavailable`: storage did not accept the file after several retries; nothing was saved. Safe to retry after `Retry-After` (10 seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
             }
           }
         }
@@ -2929,6 +3415,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -3003,6 +3500,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -3109,6 +3617,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -3193,6 +3712,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -3202,8 +3732,8 @@
         "tags": [
           "Images"
         ],
-        "summary": "Replace image metadata",
-        "description": "Replace an image's custom metadata. The object you send replaces the stored one (it is not merged); send `null` or `{}` to clear it. Max 50 top-level keys / 4 KB serialized; the request body may be at most 16 KB.",
+        "summary": "Update image metadata or visibility",
+        "description": "Replace an image's custom metadata, change its visibility, or both (send at least one field). `metadata` replaces the stored object (it is not merged); send `null` or `{}` to clear it. Max 50 top-level keys / 4 KB serialized; the request body may be at most 16 KB.\n\nChanging `visibility` moves the stored file between its public key and a private one (`cp/i/`), because the CDN decides from the URL alone whether a signature is needed. The old URL stops working at once; its resized and converted versions stop within about a minute; copies others already saved cannot be recalled. Making a file public turns off its password share links. Images and PDFs only: videos and audio (`visibility_change_unsupported`) and files in a collection (`visibility_change_collection`) keep the visibility they were uploaded with. Making a file private counts toward the Free plan's 100 private assets; storage and upload counts are unchanged.\n\nThe response is the image as `get_image` returns it, plus `visibility` and, when private, a signed `url` valid for 1 hour with `signed_expires`.",
         "security": [
           {
             "bearerAuth": []
@@ -3227,6 +3757,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "description": "At least one of `metadata` and `visibility`.",
                 "properties": {
                   "metadata": {
                     "type": [
@@ -3239,10 +3770,28 @@
                       "env": "prod",
                       "reviewed": true
                     }
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ],
+                    "description": "Move the file to public or private. Same value as now: no change. Applied before `metadata`, so a refused change leaves the metadata untouched too.",
+                    "example": "private"
                   }
                 },
-                "required": [
-                  "metadata"
+                "anyOf": [
+                  {
+                    "required": [
+                      "metadata"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "visibility"
+                    ]
+                  }
                 ]
               }
             }
@@ -3250,31 +3799,14 @@
         },
         "responses": {
           "200": {
-            "description": "Updated metadata",
+            "description": "The updated image",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "example": "img_abc123"
-                        },
-                        "metadata": {
-                          "type": [
-                            "object",
-                            "null"
-                          ],
-                          "additionalProperties": true,
-                          "example": {
-                            "env": "prod",
-                            "reviewed": true
-                          }
-                        }
-                      }
+                      "$ref": "#/components/schemas/Image"
                     }
                   }
                 }
@@ -3282,7 +3814,7 @@
             }
           },
           "400": {
-            "description": "`validation_error`: the body is not JSON, has no `metadata` field, or the metadata is not an object, has more than 50 keys, exceeds 4 KB or contains unsafe characters.",
+            "description": "`validation_error`: the body is not JSON, has neither `metadata` nor `visibility`, `visibility` is not `public` or `private`, or the metadata is not an object, has more than 50 keys, exceeds 4 KB or contains unsafe characters.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3301,8 +3833,18 @@
               }
             }
           },
+          "402": {
+            "description": "`private_limit_reached`: making the file private would exceed the Free plan's 100 private assets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "403": {
-            "description": "`publishable_key_forbidden`: publishable keys (`pv_pub_`) can only upload images; use a secret key. `account_suspended`: the account is suspended.",
+            "description": "`publishable_key_forbidden`: publishable keys (`pv_pub_`) can only upload images; use a secret key. `account_suspended`: the account is suspended. `visibility_change_blocked`: the file was taken down, so its visibility cannot change.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3313,6 +3855,16 @@
           },
           "404": {
             "description": "`image_not_found`: no image or PDF with this id in the project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`visibility_change_collection`: the file belongs to a collection, whose files share one visibility. `visibility_change_conflict`: the file changed or was deleted during the change; nothing was moved, retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3333,6 +3885,27 @@
           },
           "429": {
             "description": "`rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          },
+          "503": {
+            "description": "`temporarily_unavailable`: storage did not accept the moved file after several retries; nothing changed. Safe to retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3421,6 +3994,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -3616,6 +4200,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           },
@@ -3892,6 +4487,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           },
           "502": {
@@ -4089,7 +4695,7 @@
                               },
                               "error": {
                                 "type": "string",
-                                "description": "Present when not `ok`: `missing_data`, `invalid_data` (bad base64), `file_too_large`, `invalid_file`, `invalid_metadata`, `private_limit_reached`, `upload_limit_reached`, `storage_limit_reached`, `upload_failed`, or a URL-import code (`invalid_url`, `unsupported_scheme`, `blocked_host`, `url_fetch_failed`, `url_too_large`)."
+                                "description": "Present when not `ok`: `missing_data`, `invalid_data` (bad base64), `file_too_large`, `invalid_file`, `invalid_metadata`, `private_limit_reached`, `upload_limit_reached`, `storage_limit_reached`, `upload_failed`, `temporarily_unavailable` (storage did not accept this item, or the batch's 30-second storage budget ran out; nothing was saved for it, so resend it), or a URL-import code (`invalid_url`, `unsupported_scheme`, `blocked_host`, `url_fetch_failed`, `url_too_large`)."
                               }
                             },
                             "required": [
@@ -4162,6 +4768,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -4478,6 +5095,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -4521,6 +5149,11 @@
                             "type": "string",
                             "example": "Production"
                           },
+                          "strict_transforms": {
+                            "type": "boolean",
+                            "description": "When true, the CDN only honors named presets (`?size=<builtin|custom>`) and ignores arbitrary transform params.",
+                            "example": false
+                          },
                           "created_at": {
                             "type": "string",
                             "format": "date-time"
@@ -4534,6 +5167,7 @@
                         "required": [
                           "id",
                           "name",
+                          "strict_transforms",
                           "created_at",
                           "current"
                         ]
@@ -4645,6 +5279,10 @@
                               "type": "string",
                               "example": "Production"
                             },
+                            "strict_transforms": {
+                              "type": "boolean",
+                              "example": false
+                            },
                             "created_at": {
                               "type": "string",
                               "format": "date-time"
@@ -4653,6 +5291,7 @@
                           "required": [
                             "id",
                             "name",
+                            "strict_transforms",
                             "created_at"
                           ]
                         },
@@ -4740,7 +5379,8 @@
         "tags": [
           "Projects"
         ],
-        "summary": "Rename a project",
+        "summary": "Update a project",
+        "description": "Rename a project and/or toggle `strict_transforms` (presets-only CDN transform enforcement). Provide at least one field.",
         "security": [
           {
             "bearerAuth": []
@@ -4761,21 +5401,62 @@
                     "minLength": 1,
                     "maxLength": 100,
                     "example": "Production"
+                  },
+                  "strict_transforms": {
+                    "type": "boolean",
+                    "description": "When true, only built-in and custom `?size=<name>` presets are transformed on the CDN.",
+                    "example": true
                   }
-                },
-                "required": [
-                  "name"
-                ]
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Renamed project"
+            "description": "Updated project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "proj_abc123"
+                        },
+                        "name": {
+                          "type": "string",
+                          "example": "Production"
+                        },
+                        "strict_transforms": {
+                          "type": "boolean",
+                          "example": true
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "strict_transforms",
+                        "created_at"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
           },
           "400": {
-            "description": "`invalid_json` or `validation_error`: name is missing, empty or longer than 100 characters.",
+            "description": "`invalid_json` or `validation_error`: provide a valid `name` and/or boolean `strict_transforms`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4872,6 +5553,399 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/presets": {
+      "get": {
+        "operationId": "list_presets",
+        "tags": [
+          "Transform Presets"
+        ],
+        "summary": "List custom transform presets",
+        "description": "Lists the active project's custom named transform presets, plan capacity (Free 5, Starter 25, Pro 100), built-in preset names, and whether `strict_transforms` is enabled.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project transform presets and limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TransformPreset"
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "limit": {
+                          "type": "integer",
+                          "example": 25
+                        },
+                        "total": {
+                          "type": "integer",
+                          "example": 2
+                        },
+                        "strict_transforms": {
+                          "type": "boolean",
+                          "example": false
+                        },
+                        "builtin_presets": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "example": [
+                            "s",
+                            "m",
+                            "l",
+                            "social",
+                            "square",
+                            "portrait"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "limit",
+                        "total",
+                        "strict_transforms",
+                        "builtin_presets"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`preset_management_forbidden`: publishable keys cannot manage transform presets. `account_suspended`: the account is suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/presets/{name}": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "Custom preset name (2–40 lowercase letters, digits, `-` or `_`; cannot shadow built-in presets `s`, `m`, `l`, `social`, `square`, `portrait`).",
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{1,39}$"
+          },
+          "example": "avatar"
+        }
+      ],
+      "put": {
+        "operationId": "upsert_preset",
+        "tags": [
+          "Transform Presets"
+        ],
+        "summary": "Create or update a transform preset",
+        "description": "Idempotently creates (`201`) or updates (`200`) a named transform preset on the active project and mirrors it to edge KV. Reference it on any project image URL with `?size=<name>`. Presets cannot nest `size`.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "params": {
+                    "$ref": "#/components/schemas/TransformParams"
+                  }
+                },
+                "required": [
+                  "params"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated transform preset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TransformPreset"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "limit": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "limit"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created transform preset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TransformPreset"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "limit": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "limit"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_json` or `validation_error`: invalid preset name or invalid/empty `params`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`preset_management_forbidden`: publishable keys cannot manage transform presets. `account_suspended`: the account is suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`preset_limit_reached`: the project already has the maximum number of custom presets for its plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_preset",
+        "tags": [
+          "Transform Presets"
+        ],
+        "summary": "Delete a transform preset",
+        "description": "Removes a custom named preset from the active project and updates edge KV.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted preset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "deleted": {
+                          "type": "boolean",
+                          "example": true
+                        },
+                        "name": {
+                          "type": "string",
+                          "example": "avatar"
+                        }
+                      },
+                      "required": [
+                        "deleted",
+                        "name"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`preset_management_forbidden`: publishable keys cannot manage transform presets. `account_suspended`: the account is suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`preset_not_found`: no custom preset with this name exists in the project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -5291,6 +6365,634 @@
         }
       }
     },
+    "/v1/share-links": {
+      "get": {
+        "operationId": "list_share_links",
+        "tags": [
+          "Share Links"
+        ],
+        "summary": "List share links",
+        "description": "Lists the project's share links, newest first, including expired and revoked ones. Filter to one asset with `asset_id`.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only links to this image or video.",
+            "example": "img_abc123def456"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Maximum number of links to return."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share links, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ShareLink"
+                      }
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_error`: `limit` is not an integer from 1 to 100.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`share_link_management_forbidden`: publishable keys cannot manage share links. `account_suspended`: the account is suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "create_share_link",
+        "tags": [
+          "Share Links"
+        ],
+        "summary": "Create a share link",
+        "description": "Creates a password-protected link to one private image or MP4 video in the project (Starter and Pro). The caller chooses the password; it is stored only as a hash and never returned, so share it with the recipient separately. The recipient opens `url`, enters the password and sees the media through a signed URL that lasts 10 minutes for images and 1 hour for videos. Public media already has a share page at pixelvault.dev/i/; audio and PDFs are not supported.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "asset_id": {
+                    "type": "string",
+                    "description": "A private image (`img_`) or video (`vid_`) in the project.",
+                    "example": "img_abc123def456"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "description": "8 to 128 characters, used as sent (not trimmed).",
+                    "example": "correct-horse-battery"
+                  },
+                  "expires_in": {
+                    "type": "integer",
+                    "minimum": 3600,
+                    "maximum": 7776000,
+                    "default": 604800,
+                    "description": "Link lifetime in seconds: 1 hour to 90 days, default 7 days.",
+                    "example": 604800
+                  }
+                },
+                "required": [
+                  "asset_id",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Share link created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ShareLink"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_json` or `validation_error`: `asset_id` missing, `password` not 8 to 128 characters, or `expires_in` outside 3600 to 7776000. `share_asset_unsupported`: the asset is audio or a PDF.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "`share_links_require_paid_plan`: share links are available on Starter and Pro.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`share_link_management_forbidden`: publishable keys cannot manage share links. `account_suspended`: the account is suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`image_not_found` or `video_not_found`: no such asset in the project. `account_not_found`: the account no longer exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`share_asset_not_private`: the asset is public; share links protect private media only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/share-links/{id}": {
+      "get": {
+        "operationId": "get_share_link",
+        "tags": [
+          "Share Links"
+        ],
+        "summary": "Get a share link",
+        "description": "Returns one share link of the project with its current status.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^shr_[a-z0-9]{12}$"
+            },
+            "description": "Share-link id (`shr_` prefix).",
+            "example": "shr_abc123def456"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The share link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ShareLink"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`share_link_management_forbidden`: publishable keys cannot manage share links. `account_suspended`: the account is suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`share_link_not_found`: no share link with this id belongs to the project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "revoke_share_link",
+        "tags": [
+          "Share Links"
+        ],
+        "summary": "Revoke a share link",
+        "description": "Turns the link off immediately: the next unlock attempt gets `share_link_not_found`. Signed URLs already handed out keep working until they expire (at most 1 hour). Idempotent: revoking a revoked link returns it unchanged.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^shr_[a-z0-9]{12}$"
+            },
+            "description": "Share-link id (`shr_` prefix).",
+            "example": "shr_abc123def456"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revoked share link (`status: revoked`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ShareLink"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`share_link_management_forbidden`: publishable keys cannot manage share links. `account_suspended`: the account is suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`share_link_not_found`: no share link with this id belongs to the project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/share-links/{id}/unlock": {
+      "post": {
+        "operationId": "unlock_share_link",
+        "tags": [
+          "Share Links"
+        ],
+        "summary": "Unlock a share link",
+        "description": "Public, no credentials: the pixelvault.dev/s/{id} page calls it with the password the recipient typed. On success it returns a signed CDN URL for the media (10 minutes for images, 1 hour for videos, plus a signed poster URL for videos). A link that does not exist, has expired, was revoked, lost its media or whose owner left the paid plan answers the same `share_link_not_found`. Attempts are limited to 10 per minute per IP and 30 per hour per link.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^shr_[a-z0-9]{12}$"
+            },
+            "description": "Share-link id (`shr_` prefix).",
+            "example": "shr_abc123def456"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "example": "correct-horse-battery"
+                  }
+                },
+                "required": [
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Unlocked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "image",
+                            "video"
+                          ],
+                          "example": "image"
+                        },
+                        "mime_type": {
+                          "type": "string",
+                          "example": "image/png"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri",
+                          "description": "Signed img.pixelvault.dev URL.",
+                          "example": "https://img.pixelvault.dev/proj_abc123/cp/i/img_abc123def456.png?token=abc&expires=1795449600"
+                        },
+                        "poster_url": {
+                          "type": "string",
+                          "format": "uri",
+                          "description": "Signed poster frame (videos with a poster only)."
+                        },
+                        "expires": {
+                          "type": "integer",
+                          "description": "Unix seconds when `url` (and `poster_url`) stop working.",
+                          "example": 1795449600
+                        },
+                        "link_expires_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "When the share link itself expires.",
+                          "example": "2026-11-29T12:00:00.000Z"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "mime_type",
+                        "url",
+                        "expires",
+                        "link_expires_at"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_json` or `validation_error`: no `password` in the body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`invalid_share_password`: wrong password.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`share_link_not_found`: the link doesn't exist, has expired or was turned off.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limit_exceeded`: more than 10 attempts per minute from this IP or 30 per hour on this link. Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/keys": {
       "get": {
         "operationId": "list_keys",
@@ -5413,6 +7115,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -5563,6 +7276,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -5662,6 +7386,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -5789,6 +7524,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -6108,6 +7854,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -6275,6 +8032,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -6365,6 +8133,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -6463,6 +8242,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -6565,6 +8355,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -6609,6 +8410,10 @@
                     "maximum": 2592000,
                     "default": 3600,
                     "example": 2592000
+                  },
+                  "transforms": {
+                    "$ref": "#/components/schemas/TransformParams",
+                    "description": "Optional on-the-fly transforms bound into the signature (raster images only; refused for PDFs and SVGs). Private transformed responses are served with `Cache-Control: private, max-age=300` and fail closed (403) if the transform cannot be produced."
                   }
                 }
               }
@@ -6629,13 +8434,13 @@
                         "url": {
                           "type": "string",
                           "format": "uri",
-                          "example": "https://img.pixelvault.dev/proj_xyz789/cp/i/img_abc123.png?token=3f9a…&expires=1795449600"
+                          "example": "https://img.pixelvault.dev/proj_xyz789/cp/i/img_abc123.png?w=400&fmt=webp&token=3f9a…&expires=1795449600"
                         },
                         "branded_url": {
                           "type": "string",
                           "format": "uri",
                           "description": "The same signed asset served from the project's active custom domain. Omitted when no ready custom domain exists.",
-                          "example": "https://media.example.com/cp/i/img_abc123.png?token=3f9a…&expires=1795449600"
+                          "example": "https://media.example.com/cp/i/img_abc123.png?w=400&fmt=webp&token=3f9a…&expires=1795449600"
                         },
                         "expires": {
                           "type": "integer",
@@ -6650,7 +8455,7 @@
             }
           },
           "400": {
-            "description": "`invalid_expires_in`: `expires_in` is not an integer between 60 and 2592000.",
+            "description": "`invalid_expires_in`, `validation_error`, `document_transforms_unsupported` or `svg_transforms_unsupported`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6696,6 +8501,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -6827,6 +8643,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           },
           "502": {
@@ -6926,6 +8753,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           },
@@ -7055,6 +8893,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -7220,6 +9069,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -7317,6 +9177,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -7455,6 +9326,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -7636,6 +9518,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -7758,6 +9651,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -7981,10 +9885,21 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           },
           "503": {
-            "description": "`audio_policy_pending`: audio hosting is not configured on this deployment.",
+            "description": "`audio_policy_pending`: audio hosting is not configured on this deployment. `temporarily_unavailable`: storage did not accept the file after several retries; nothing was saved. Safe to retry after `Retry-After` (10 seconds).",
             "content": {
               "application/json": {
                 "schema": {
@@ -8369,6 +10284,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           },
           "503": {
@@ -8532,6 +10458,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -8621,6 +10558,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -8769,6 +10717,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -8842,6 +10801,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -8981,6 +10951,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           },
           "503": {
@@ -9110,6 +11091,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -9469,6 +11461,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -9618,6 +11621,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -9704,6 +11718,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -9848,6 +11873,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -9921,6 +11957,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -10053,6 +12100,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           },
@@ -10196,6 +12254,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           },
           "503": {
@@ -10303,6 +12372,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -10399,6 +12479,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           },
@@ -10529,6 +12620,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -10750,6 +12852,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -10921,6 +13034,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -11065,6 +13189,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -11149,6 +13284,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -11237,72 +13383,7 @@
                     "data": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string",
-                            "example": "img_abc123"
-                          },
-                          "url": {
-                            "type": "string",
-                            "format": "uri",
-                            "description": "CDN URL; a short-lived signed URL for private images.",
-                            "example": "https://img.pixelvault.dev/proj_xyz789/img_abc123.png"
-                          },
-                          "branded_url": {
-                            "type": "string",
-                            "format": "uri",
-                            "description": "Same asset on the project's active custom domain; omitted when none is ready.",
-                            "example": "https://media.example.com/img_abc123.png"
-                          },
-                          "visibility": {
-                            "type": "string",
-                            "enum": [
-                              "public",
-                              "private"
-                            ],
-                            "example": "public"
-                          },
-                          "filename": {
-                            "type": "string",
-                            "example": "screenshot.png"
-                          },
-                          "mime_type": {
-                            "type": "string",
-                            "example": "image/png"
-                          },
-                          "size_bytes": {
-                            "type": "integer",
-                            "example": 51234
-                          },
-                          "width": {
-                            "type": "integer",
-                            "nullable": true,
-                            "example": 1280
-                          },
-                          "height": {
-                            "type": "integer",
-                            "nullable": true,
-                            "example": 720
-                          },
-                          "project_id": {
-                            "type": "string",
-                            "example": "proj_xyz789"
-                          },
-                          "folder": {
-                            "type": "string",
-                            "nullable": true,
-                            "example": null
-                          },
-                          "created_at": {
-                            "type": "string",
-                            "format": "date-time",
-                            "example": "2026-11-16T12:00:00.000Z"
-                          },
-                          "description": {
-                            "$ref": "#/components/schemas/DashboardDescription"
-                          }
-                        }
+                        "$ref": "#/components/schemas/DashboardUpload"
                       }
                     },
                     "meta": {
@@ -11360,6 +13441,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -11370,7 +13462,7 @@
           "Uploads"
         ],
         "summary": "Upload an image or PDF from a signed-in session",
-        "description": "Store one image or PDF document for the signed-in account. Authenticates with a dashboard session token (JWT), **not** an API key: this is what the web dashboard and converter tools call, so a person who has never been issued a key can still add media. PDFs are served as forced downloads. The upload lands in the account's default project and counts toward its quotas. Limited to 200 uploads per hour per account.\n\nDeliberately narrow: one file per request, no folder, visibility, TTL or URL import. Callers that need those should use `upload_image` with an API key.",
+        "description": "Store one image or PDF document for the signed-in account. Authenticates with a dashboard session token (JWT), **not** an API key: this is what the web dashboard and converter tools call, so a person who has never been issued a key can still add media. PDFs are served as forced downloads. The upload lands in the account's default project and counts toward its quotas. Limited to 200 uploads per hour per account.\n\n`visibility=private` follows `upload_image`'s rules: the file is served only through signed URLs, the Free plan holds at most 100 private assets, and `url` is a signed URL valid for 1 hour (`signed_expires`).\n\nDeliberately narrow: one file per request, no folder, TTL or URL import. Callers that need those should use `upload_image` with an API key.",
         "security": [
           {
             "sessionAuth": []
@@ -11396,6 +13488,16 @@
                     ],
                     "description": "Set to `true` to also start an AI description (alt text, caption, OCR text) for this image. Uses the account's description allowance (Free: 20 in total; Starter: 1,000 a month; Pro: 10,000 a month). Never fails the upload: the response says why nothing was started.",
                     "example": "true"
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ],
+                    "default": "public",
+                    "description": "`private` stores the file behind signed URLs. Any other value is rejected.",
+                    "example": "private"
                   }
                 },
                 "required": [
@@ -11431,6 +13533,7 @@
                         "url": {
                           "type": "string",
                           "format": "uri",
+                          "description": "CDN URL; a signed URL valid for 1 hour when private.",
                           "example": "https://img.pixelvault.dev/proj_xyz789/img_abc123.png"
                         },
                         "branded_url": {
@@ -11438,6 +13541,19 @@
                           "format": "uri",
                           "description": "Same asset on the project's active custom domain; omitted when none is ready.",
                           "example": "https://media.example.com/img_abc123.png"
+                        },
+                        "visibility": {
+                          "type": "string",
+                          "enum": [
+                            "public",
+                            "private"
+                          ],
+                          "example": "public"
+                        },
+                        "signed_expires": {
+                          "type": "integer",
+                          "description": "Present when private: Unix seconds when the signed `url` stops working.",
+                          "example": 1795000000
                         },
                         "mime_type": {
                           "type": "string",
@@ -11479,7 +13595,7 @@
             }
           },
           "400": {
-            "description": "`missing_file`: no `file` field. `invalid_file`: the bytes are not a supported image or PDF.",
+            "description": "`missing_file`: no `file` field. `invalid_file`: the bytes are not a supported image or PDF. `validation_error`: `visibility` is not `public` or `private`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11499,7 +13615,7 @@
             }
           },
           "402": {
-            "description": "`upload_limit_reached`, `storage_limit_reached`: a plan quota is full. Plan ceilings, not rate limits.",
+            "description": "`upload_limit_reached`, `storage_limit_reached`: a plan quota is full. `private_limit_reached`: a private upload would exceed the Free plan's 100 private assets. Plan ceilings, not rate limits.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11540,6 +13656,27 @@
           },
           "429": {
             "description": "`rate_limit_exceeded`: more than 200 uploads per hour for the account (or 300 requests per hour from one IP). Honour `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          },
+          "503": {
+            "description": "`temporarily_unavailable`: storage did not accept the file after several retries; nothing was saved. Safe to retry after `Retry-After` (10 seconds).",
             "content": {
               "application/json": {
                 "schema": {
@@ -11610,6 +13747,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -11717,6 +13865,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -11786,6 +13945,173 @@
           },
           "429": {
             "description": "`rate_limit_exceeded`: more than 300 dashboard writes per hour from this IP.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "dashboard_update_upload",
+        "tags": [
+          "Uploads"
+        ],
+        "summary": "Change an image's visibility from a signed-in session",
+        "description": "Make one of the signed-in account's images or PDFs private or public. Authenticates with a dashboard session token (JWT), **not** an API key: this is what the dashboard's Make private / Make public actions call. Callers with an API key should use `update_image_metadata` with `visibility`. An id that does not exist or belongs to another account returns 404. Same visibility as now: 200 with no change.\n\nChanging `visibility` moves the stored file between its public key and a private one (`cp/i/`), because the CDN decides from the URL alone whether a signature is needed. The old URL stops working at once; its resized and converted versions stop within about a minute; copies others already saved cannot be recalled. Making a file public turns off its password share links. Images and PDFs only: videos and audio (`visibility_change_unsupported`) and files in a collection (`visibility_change_collection`) keep the visibility they were uploaded with. Making a file private counts toward the Free plan's 100 private assets; storage and upload counts are unchanged.\n\nThe response is the row as `dashboard_list_images` returns it, with a 1-hour signed `url` when private.",
+        "security": [
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Image id.",
+            "schema": {
+              "type": "string",
+              "example": "img_abc123"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ],
+                    "example": "private"
+                  }
+                },
+                "required": [
+                  "visibility"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The image after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DashboardUpload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_error`: the body is not JSON or `visibility` is not `public` or `private`. `visibility_change_unsupported`: videos and audio keep the visibility they were uploaded with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: no dashboard session, or it is invalid or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "`private_limit_reached`: making the file private would exceed the Free plan's 100 private assets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`visibility_change_blocked`: the file was taken down, so its visibility cannot change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`image_not_found`: no such image in this account. `project_not_found`: the `X-PixelVault-Project-Id` project is not the account's.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`visibility_change_collection`: the file belongs to a collection, whose files share one visibility. `visibility_change_conflict`: the file changed or was deleted during the change; nothing was moved, retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limit_exceeded`: more than 300 dashboard writes per hour from this IP.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          },
+          "503": {
+            "description": "`temporarily_unavailable`: storage did not accept the moved file after several retries; nothing changed. Safe to retry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11918,6 +14244,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           },
@@ -12067,6 +14404,27 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
+          },
+          "503": {
+            "description": "`temporarily_unavailable`: storage did not accept the file after several retries; nothing was saved. Safe to retry after `Retry-After` (10 seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
             }
           }
         }
@@ -12206,6 +14564,17 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
               }
             }
           }
@@ -12404,6 +14773,17 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
             }
           }
         }
@@ -12479,16 +14859,11 @@
           {
             "name": "size",
             "in": "query",
-            "description": "Named preset (wins over w/h). s=256w, m=640w, l=1280w, social=1200×630 OG card.",
+            "description": "Named preset (wins over w/h). Built-ins: s=256w, m=640w, l=1280w, social=1200×630, square=1080×1080, portrait=1080×1350; or any custom preset created via `PUT /v1/presets/{name}`.",
             "schema": {
-              "type": "string",
-              "enum": [
-                "s",
-                "m",
-                "l",
-                "social"
-              ]
-            }
+              "type": "string"
+            },
+            "example": "social"
           },
           {
             "name": "w",
@@ -12549,6 +14924,57 @@
                 "60",
                 "75",
                 "85"
+              ]
+            }
+          },
+          {
+            "name": "dpr",
+            "in": "query",
+            "description": "Device pixel ratio multiplier (snapped to 1/1.5/2; 1 = no-op). Honored alongside `w`/`h` or a preset.",
+            "schema": {
+              "type": "number",
+              "enum": [
+                1,
+                1.5,
+                2
+              ]
+            },
+            "example": 2
+          },
+          {
+            "name": "trim",
+            "in": "query",
+            "description": "Auto-trim uniform outer borders/whitespace (`border` or `auto`). Project images only.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "border",
+                "auto"
+              ]
+            }
+          },
+          {
+            "name": "anim",
+            "in": "query",
+            "description": "Set `false` (or `0`) to flatten an animated GIF/WebP to its static first frame. Project images only.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "false",
+                "true"
+              ]
+            }
+          },
+          {
+            "name": "metadata",
+            "in": "query",
+            "description": "Control EXIF, copyright, and C2PA metadata preservation (`none`, `copyright`, or `keep`). Project images only.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "none",
+                "copyright",
+                "keep"
               ]
             }
           },
@@ -12664,11 +15090,116 @@
           {
             "name": "tile",
             "in": "query",
-            "description": "Watermark: the CDN path of another RASTER image (png/jpg/webp/avif) in the SAME project: its image_id.ext (e.g. img_logo.png), prefixed with its folder if it has one — not the original upload filename. Tiled edge-to-edge at its native size over the base. Bake opacity into the source PNG. Must be your own uploaded raster image — not an external URL and not SVG. A missing or unknown path is ignored (the base is served).",
+            "description": "Tiled watermark: the CDN path of another PUBLIC RASTER image (png/jpg/webp/avif) in the SAME project: its image_id.ext (e.g. img_logo.png), prefixed with its folder if it has one — not the original upload filename. Tiled edge-to-edge at its native size over the base. Missing or unknown paths are ignored.",
             "schema": {
               "type": "string"
             },
             "example": "img_logo.png"
+          },
+          {
+            "name": "watermark",
+            "in": "query",
+            "description": "Positioned single watermark: the CDN path of another PUBLIC RASTER image (png/jpg/webp/avif) in the SAME project (e.g. img_logo.png). Placed once according to `watermark_pos` (default `bottom-right`). Missing or unknown paths are ignored.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "img_logo.png"
+          },
+          {
+            "name": "watermark_pos",
+            "in": "query",
+            "description": "Anchor position for `watermark` (20px inset from edge, or centered).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "bottom-right",
+                "bottom-left",
+                "top-right",
+                "top-left",
+                "center"
+              ]
+            },
+            "example": "bottom-right"
+          },
+          {
+            "name": "watermark_opacity",
+            "in": "query",
+            "description": "Opacity for `watermark` (snapped to 0.25/0.5/0.75/1).",
+            "schema": {
+              "type": "number",
+              "minimum": 0.05,
+              "maximum": 1
+            },
+            "example": 0.75
+          },
+          {
+            "name": "watermark_width",
+            "in": "query",
+            "description": "Target width in px for `watermark` (snapped up to 32/64/96/128/200/320/512).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 512
+            },
+            "example": 128
+          },
+          {
+            "name": "text",
+            "in": "query",
+            "description": "Text overlay (1–120 printable characters). Project images only.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "example": "SAMPLE"
+          },
+          {
+            "name": "text_color",
+            "in": "query",
+            "description": "Text overlay color: hex (`%23ffffff`), rgb()/rgba(), or CSS color name (default white).",
+            "schema": {
+              "type": "string"
+            },
+            "example": "#ffffff"
+          },
+          {
+            "name": "text_size",
+            "in": "query",
+            "description": "Text overlay font size in px (snapped to 16/24/32/48/64/96/128; default 32).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 256
+            },
+            "example": 32
+          },
+          {
+            "name": "text_pos",
+            "in": "query",
+            "description": "Anchor position for `text` (20px inset from edge, or centered; default `bottom-right`).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "bottom-right",
+                "bottom-left",
+                "top-right",
+                "top-left",
+                "center"
+              ]
+            },
+            "example": "bottom-right"
+          },
+          {
+            "name": "text_opacity",
+            "in": "query",
+            "description": "Opacity for `text` (snapped to 0.25/0.5/0.75/1).",
+            "schema": {
+              "type": "number",
+              "minimum": 0.05,
+              "maximum": 1
+            },
+            "example": 0.75
           },
           {
             "name": "token",
@@ -12726,7 +15257,18 @@
             "description": "The requested byte range cannot be satisfied (video and audio)."
           },
           "429": {
-            "description": "Bandwidth limit exceeded on the free tier (a placeholder image is returned)."
+            "description": "Bandwidth limit exceeded on the free tier (a placeholder image is returned).",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              }
+            }
           }
         }
       }

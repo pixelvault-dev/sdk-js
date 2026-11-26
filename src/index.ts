@@ -3,6 +3,8 @@ export { VideosResource } from "./videos.js";
 export { AudioResource } from "./audio.js";
 export { ExportsResource } from "./exports.js";
 export { CustomDomainsResource } from "./custom-domains.js";
+export { PresetsResource } from "./presets.js";
+export { ProjectsResource } from "./projects.js";
 export type {
   ApiKey,
   BatchResult,
@@ -28,6 +30,23 @@ export type {
   CustomDomainCapacity,
   CustomDomainVerification,
 } from "./custom-domains.js";
+export type {
+  SignUrlTransforms,
+  TransformFit,
+  TransformFormat,
+  TransformMetadata,
+  TransformOverlayPosition,
+  TransformParams,
+  TransformPreset,
+  TransformPresetMeta,
+  TransformQuality,
+} from "./presets.js";
+export type {
+  CreatedProject,
+  Project,
+  ProjectListMeta,
+  UpdateProjectInput,
+} from "./projects.js";
 export { VERSION } from "./http.js";
 export type {
   CreateVideoUploadInput,

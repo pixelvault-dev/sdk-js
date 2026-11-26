@@ -780,3 +780,104 @@ describe("exports", () => {
     });
   });
 });
+
+describe("presets, projects, and signed transforms", () => {
+  it("lists, upserts, and deletes custom transform presets", async () => {
+    const preset = {
+      name: "avatar",
+      params: { w: 256, h: 256, fit: "cover", gravity: "face", dpr: 2, fmt: "auto" },
+      created_at: "2026-11-26T00:00:00Z",
+      updated_at: "2026-11-26T00:00:00Z",
+    };
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({
+          data: [preset],
+          meta: {
+            limit: 5,
+            total: 1,
+            strict_transforms: false,
+            builtin_presets: ["s", "m", "l", "social", "square", "portrait"],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(json({ data: preset }, 201))
+      .mockResolvedValueOnce(json({ data: { deleted: true, name: "avatar" } }));
+
+    const pv = client(f as unknown as typeof fetch);
+    await expect(pv.presets.list()).resolves.toMatchObject({
+      data: [{ name: "avatar" }],
+      meta: { limit: 5, strict_transforms: false },
+    });
+    await expect(
+      pv.presets.upsert("avatar", { w: 256, h: 256, fit: "cover", gravity: "face", dpr: 2, fmt: "auto" }),
+    ).resolves.toMatchObject({ name: "avatar" });
+    await expect(pv.presets.delete("avatar")).resolves.toBeUndefined();
+
+    expect((f.mock.calls[1] as unknown as [URL, RequestInit])[0].pathname).toBe("/v1/presets/avatar");
+    expect((f.mock.calls[1] as unknown as [URL, RequestInit])[1]).toMatchObject({
+      method: "PUT",
+      body: JSON.stringify({
+        params: { w: 256, h: 256, fit: "cover", gravity: "face", dpr: 2, fmt: "auto" },
+      }),
+    });
+    expect((f.mock.calls[2] as unknown as [URL, RequestInit])[1]).toMatchObject({ method: "DELETE" });
+  });
+
+  it("manages projects and toggles strictTransforms", async () => {
+    const proj = {
+      id: "proj/1",
+      name: "Main",
+      strict_transforms: false,
+      created_at: "2026-11-26T00:00:00Z",
+      current: true,
+    };
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ data: [proj], meta: { limit: 1, total: 1 } }))
+      .mockResolvedValueOnce(json({ data: { ...proj, id: "proj_2", name: "Staging" } }, 201))
+      .mockResolvedValueOnce(json({ data: { ...proj, strict_transforms: true } }))
+      .mockResolvedValueOnce(json({ data: { deleted: true, id: "proj/1" } }));
+
+    const pv = client(f as unknown as typeof fetch);
+    await expect(pv.projects.list()).resolves.toMatchObject({ data: [{ id: "proj/1" }], meta: { limit: 1 } });
+    await expect(pv.projects.create("Staging")).resolves.toMatchObject({ id: "proj_2", name: "Staging" });
+    await expect(pv.projects.update("proj/1", { strictTransforms: true })).resolves.toMatchObject({
+      strict_transforms: true,
+    });
+    await expect(pv.projects.delete("proj/1")).resolves.toBeUndefined();
+
+    expect((f.mock.calls[2] as unknown as [URL, RequestInit])[0].pathname).toBe("/v1/projects/proj%2F1");
+    expect((f.mock.calls[2] as unknown as [URL, RequestInit])[1]).toMatchObject({
+      method: "PATCH",
+      body: JSON.stringify({ strict_transforms: true }),
+    });
+  });
+
+  it("sends transforms in images.signUrl", async () => {
+    const f = vi.fn().mockResolvedValueOnce(
+      json({
+        data: {
+          url: "https://img.pixelvault.dev/p/cp/i/img_1.png?token=sig&expires=1900000000&w=800&fmt=auto",
+          expires: 1900000000,
+          expires_at: "2026-11-26T12:00:00Z",
+        },
+      }),
+    );
+
+    const pv = client(f as unknown as typeof fetch);
+    const signed = await pv.images.signUrl("img_1", {
+      expiresIn: 1800,
+      transforms: { w: 800, fmt: "auto", watermark: "img_logo.png", watermark_pos: "bottom-right" },
+    });
+    expect(signed.url).toContain("w=800");
+    expect((f.mock.calls[0] as unknown as [URL, RequestInit])[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({
+        expires_in: 1800,
+        transforms: { w: 800, fmt: "auto", watermark: "img_logo.png", watermark_pos: "bottom-right" },
+      }),
+    });
+  });
+});
