@@ -190,8 +190,12 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Replace image metadata
-         * @description Replace an image's custom metadata. The object you send replaces the stored one (it is not merged); send `null` or `{}` to clear it. Max 50 top-level keys / 4 KB serialized; the request body may be at most 16 KB.
+         * Update image metadata or visibility
+         * @description Replace an image's custom metadata, change its visibility, or both (send at least one field). `metadata` replaces the stored object (it is not merged); send `null` or `{}` to clear it. Max 50 top-level keys / 4 KB serialized; the request body may be at most 16 KB.
+         *
+         *     Changing `visibility` moves the stored file between its public key and a private one (`cp/i/`), because the CDN decides from the URL alone whether a signature is needed. The old URL stops working at once; its resized and converted versions stop within about a minute; copies others already saved cannot be recalled. Making a file public turns off its password share links. Images and PDFs only: videos and audio (`visibility_change_unsupported`) and files in a collection (`visibility_change_collection`) keep the visibility they were uploaded with. Making a file private counts toward the Free plan's 100 private assets; storage and upload counts are unchanged.
+         *
+         *     The response is the image as `get_image` returns it, plus `visibility` and, when private, a signed `url` valid for 1 hour with `signed_expires`.
          */
         patch: operations["update_image_metadata"];
         trace?: never;
@@ -351,8 +355,61 @@ export interface paths {
         delete: operations["delete_project"];
         options?: never;
         head?: never;
-        /** Rename a project */
+        /**
+         * Update a project
+         * @description Rename a project and/or toggle `strict_transforms` (presets-only CDN transform enforcement). Provide at least one field.
+         */
         patch: operations["update_project"];
+        trace?: never;
+    };
+    "/v1/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List custom transform presets
+         * @description Lists the active project's custom named transform presets, plan capacity (Free 5, Starter 25, Pro 100), built-in preset names, and whether `strict_transforms` is enabled.
+         */
+        get: operations["list_presets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/presets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Custom preset name (2–40 lowercase letters, digits, `-` or `_`; cannot shadow built-in presets `s`, `m`, `l`, `social`, `square`, `portrait`).
+                 * @example avatar
+                 */
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Create or update a transform preset
+         * @description Idempotently creates (`201`) or updates (`200`) a named transform preset on the active project and mirrors it to edge KV. Reference it on any project image URL with `?size=<name>`. Presets cannot nest `size`.
+         */
+        put: operations["upsert_preset"];
+        post?: never;
+        /**
+         * Delete a transform preset
+         * @description Removes a custom named preset from the active project and updates edge KV.
+         */
+        delete: operations["delete_preset"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/custom-domains": {
@@ -414,6 +471,74 @@ export interface paths {
          * @description Stops hostname routing immediately, removes the Cloudflare custom hostname and certificate, then deletes the PixelVault record. Remove the customer DNS record afterward.
          */
         delete: operations["delete_custom_domain"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/share-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List share links
+         * @description Lists the project's share links, newest first, including expired and revoked ones. Filter to one asset with `asset_id`.
+         */
+        get: operations["list_share_links"];
+        put?: never;
+        /**
+         * Create a share link
+         * @description Creates a password-protected link to one private image or MP4 video in the project (Starter and Pro). The caller chooses the password; it is stored only as a hash and never returned, so share it with the recipient separately. The recipient opens `url`, enters the password and sees the media through a signed URL that lasts 10 minutes for images and 1 hour for videos. Public media already has a share page at pixelvault.dev/i/; audio and PDFs are not supported.
+         */
+        post: operations["create_share_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/share-links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a share link
+         * @description Returns one share link of the project with its current status.
+         */
+        get: operations["get_share_link"];
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a share link
+         * @description Turns the link off immediately: the next unlock attempt gets `share_link_not_found`. Signed URLs already handed out keep working until they expire (at most 1 hour). Idempotent: revoking a revoked link returns it unchanged.
+         */
+        delete: operations["revoke_share_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/share-links/{id}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unlock a share link
+         * @description Public, no credentials: the pixelvault.dev/s/{id} page calls it with the password the recipient typed. On success it returns a signed CDN URL for the media (10 minutes for images, 1 hour for videos, plus a signed poster URL for videos). A link that does not exist, has expired, was revoked, lost its media or whose owner left the paid plan answers the same `share_link_not_found`. Attempts are limited to 10 per minute per IP and 30 per hour per link.
+         */
+        post: operations["unlock_share_link"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1185,7 +1310,9 @@ export interface paths {
          * Upload an image or PDF from a signed-in session
          * @description Store one image or PDF document for the signed-in account. Authenticates with a dashboard session token (JWT), **not** an API key: this is what the web dashboard and converter tools call, so a person who has never been issued a key can still add media. PDFs are served as forced downloads. The upload lands in the account's default project and counts toward its quotas. Limited to 200 uploads per hour per account.
          *
-         *     Deliberately narrow: one file per request, no folder, visibility, TTL or URL import. Callers that need those should use `upload_image` with an API key.
+         *     `visibility=private` follows `upload_image`'s rules: the file is served only through signed URLs, the Free plan holds at most 100 private assets, and `url` is a signed URL valid for 1 hour (`signed_expires`).
+         *
+         *     Deliberately narrow: one file per request, no folder, TTL or URL import. Callers that need those should use `upload_image` with an API key.
          */
         post: operations["dashboard_upload"];
         delete?: never;
@@ -1251,7 +1378,15 @@ export interface paths {
         delete: operations["dashboard_delete_image"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Change an image's visibility from a signed-in session
+         * @description Make one of the signed-in account's images or PDFs private or public. Authenticates with a dashboard session token (JWT), **not** an API key: this is what the dashboard's Make private / Make public actions call. Callers with an API key should use `update_image_metadata` with `visibility`. An id that does not exist or belongs to another account returns 404. Same visibility as now: 200 with no change.
+         *
+         *     Changing `visibility` moves the stored file between its public key and a private one (`cp/i/`), because the CDN decides from the URL alone whether a signature is needed. The old URL stops working at once; its resized and converted versions stop within about a minute; copies others already saved cannot be recalled. Making a file public turns off its password share links. Images and PDFs only: videos and audio (`visibility_change_unsupported`) and files in a collection (`visibility_change_collection`) keep the visibility they were uploaded with. Making a file private counts toward the Free plan's 100 private assets; storage and upload counts are unchanged.
+         *
+         *     The response is the row as `dashboard_list_images` returns it, with a 1-hour signed `url` when private.
+         */
+        patch: operations["dashboard_update_upload"];
         trace?: never;
     };
     "/v1/playground/generate": {
@@ -1403,6 +1538,53 @@ export interface components {
              */
             tags?: string[];
         } | null;
+        /** @description One image, PDF, video or audio file as the dashboard's media list shows it. */
+        DashboardUpload: {
+            /** @example img_abc123 */
+            id?: string;
+            /**
+             * Format: uri
+             * @description CDN URL; a short-lived signed URL for private files.
+             * @example https://img.pixelvault.dev/proj_xyz789/img_abc123.png
+             */
+            url?: string;
+            /**
+             * Format: uri
+             * @description Same asset on the project's active custom domain; omitted when none is ready.
+             * @example https://media.example.com/img_abc123.png
+             */
+            branded_url?: string;
+            /**
+             * @example image
+             * @enum {string}
+             */
+            kind?: "image" | "document" | "video" | "audio";
+            /**
+             * @example public
+             * @enum {string}
+             */
+            visibility?: "public" | "private";
+            /** @example screenshot.png */
+            filename?: string;
+            /** @example image/png */
+            mime_type?: string;
+            /** @example 51234 */
+            size_bytes?: number;
+            /** @example 1280 */
+            width?: number | null;
+            /** @example 720 */
+            height?: number | null;
+            /** @example proj_xyz789 */
+            project_id?: string;
+            /** @example null */
+            folder?: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-11-16T12:00:00.000Z
+             */
+            created_at?: string;
+            description?: components["schemas"]["DashboardDescription"];
+        };
         Error: {
             error?: {
                 code: string;
@@ -1469,7 +1651,184 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        /** @description A hosted image or PDF document. Upload responses (`upload_image`, `generate_image`, `edit_image`) also carry `visibility` and, for private images, `signed_expires` (Unix seconds when the signed `url` stops working). */
+        /** @description On-the-fly image transform parameters (subset of `serve_image` query parameters). */
+        TransformParams: {
+            /**
+             * @description Named preset (built-in or custom). Allowed on `sign_image_url`, disallowed inside custom preset definitions.
+             * @example avatar
+             */
+            size?: string;
+            /** @example 400 */
+            w?: number;
+            /** @example 400 */
+            h?: number;
+            /**
+             * @example cover
+             * @enum {string}
+             */
+            fit?: "scale-down" | "contain" | "cover" | "crop" | "pad";
+            /**
+             * @example auto
+             * @enum {string}
+             */
+            fmt?: "auto" | "webp" | "avif" | "jpg" | "png";
+            /**
+             * @example 85
+             * @enum {string}
+             */
+            q?: "auto" | "60" | "75" | "85";
+            /**
+             * @description Device pixel ratio multiplier (1, 1.5, or 2; requires w/h).
+             * @example 2
+             */
+            dpr?: string;
+            /**
+             * @description Auto-trim uniform outer borders.
+             * @enum {string}
+             */
+            trim?: "border" | "auto";
+            /**
+             * @description Set `false` to flatten animated GIF/WebP to the first frame.
+             * @enum {string}
+             */
+            anim?: "false" | "true";
+            /**
+             * @description EXIF/copyright/C2PA metadata handling.
+             * @enum {string}
+             */
+            metadata?: "none" | "copyright" | "keep";
+            /** @enum {string} */
+            segment?: "foreground";
+            /** @example white */
+            background?: string;
+            /** @example face */
+            gravity?: string;
+            /** @example 0.7 */
+            zoom?: string;
+            /** @example 30 */
+            blur?: string;
+            /** @example 1 */
+            sharpen?: string;
+            /** @example 90 */
+            rotate?: string;
+            /** @enum {string} */
+            flip?: "h" | "v" | "hv";
+            /** @example 1.25 */
+            brightness?: string;
+            /** @example 1.25 */
+            contrast?: string;
+            /** @example 0 */
+            saturation?: string;
+            /**
+             * @description Public same-project raster image path to tile as a watermark.
+             * @example img_logo.png
+             */
+            tile?: string;
+            /**
+             * @description Public same-project raster image path for a single positioned watermark.
+             * @example img_logo.png
+             */
+            watermark?: string;
+            /**
+             * @example bottom-right
+             * @enum {string}
+             */
+            watermark_pos?: "bottom-right" | "bottom-left" | "top-right" | "top-left" | "center";
+            /**
+             * @description Snapped to 0.25/0.5/0.75/1.
+             * @example 0.75
+             */
+            watermark_opacity?: string;
+            /**
+             * @description Target width in px (snapped up to 32..512).
+             * @example 128
+             */
+            watermark_width?: string;
+            /**
+             * @description Text overlay string.
+             * @example SAMPLE
+             */
+            text?: string;
+            /** @example #ffffff */
+            text_color?: string;
+            /**
+             * @description Font size in px (snapped to 16..128).
+             * @example 32
+             */
+            text_size?: string;
+            /**
+             * @example bottom-right
+             * @enum {string}
+             */
+            text_pos?: "bottom-right" | "bottom-left" | "top-right" | "top-left" | "center";
+            /**
+             * @description Snapped to 0.25/0.5/0.75/1.
+             * @example 0.75
+             */
+            text_opacity?: string;
+        };
+        /** @description A project-scoped custom named transform preset usable via `?size=<name>`. */
+        TransformPreset: {
+            /** @example avatar */
+            name: string;
+            params: components["schemas"]["TransformParams"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description A password-protected link to one private image or MP4 video. The password is never returned. */
+        ShareLink: {
+            /**
+             * @description Share-link id (`shr_` prefix).
+             * @example shr_abc123def456
+             */
+            id: string;
+            /**
+             * Format: uri
+             * @description The page to send the recipient. Send the password separately.
+             * @example https://pixelvault.dev/s/shr_abc123def456
+             */
+            url: string;
+            /**
+             * @description The shared image (`img_`) or video (`vid_`).
+             * @example img_abc123def456
+             */
+            asset_id: string;
+            /**
+             * @example image
+             * @enum {string}
+             */
+            asset_kind: "image" | "video";
+            /**
+             * @description `revoked` once revoked, else `expired` once `expires_at` has passed, else `active`.
+             * @example active
+             * @enum {string}
+             */
+            status: "active" | "expired" | "revoked";
+            /**
+             * Format: date-time
+             * @example 2026-11-29T12:00:00.000Z
+             */
+            expires_at: string;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            revoked_at: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-11-22T12:00:00.000Z
+             */
+            created_at: string;
+            /**
+             * @description Where the link was created.
+             * @example api
+             * @enum {string}
+             */
+            origin: "api" | "dashboard" | "mcp" | "cli";
+        };
+        /** @description A hosted image or PDF document. Upload responses (`upload_image`, `generate_image`, `edit_image`) and `update_image_metadata` also carry `visibility` and, for private images, `signed_expires` (Unix seconds when the signed `url` stops working). */
         Image: {
             /**
              * @description Image id (`img_` prefix). Keyless uploads return a temporary `anon_` id that cannot be listed, read or deleted.
@@ -2588,7 +2947,33 @@ export interface components {
     responses: never;
     parameters: never;
     requestBodies: never;
-    headers: never;
+    headers: {
+        /**
+         * @description Seconds to wait before retrying a 429. Never earlier than the reset of the `RateLimit` item that refused the request.
+         * @example 60
+         */
+        "Retry-After": number;
+        /**
+         * @description IETF RateLimit field (draft-ietf-httpapi-ratelimit-headers): one item per tracked quota, `r` = requests left in the window, `t` = seconds until it resets. Sent where the remaining count is known, and always with `r=0` on a 429.
+         * @example "export";r=9;t=3540
+         */
+        RateLimit: string;
+        /**
+         * @description IETF RateLimit-Policy field: one item per quota that applies to the request, `q` = requests allowed, `w` = window in seconds.
+         * @example "key";q=60;w=60, "project";q=300;w=60
+         */
+        "RateLimit-Policy": string;
+        /**
+         * @description RFC 9745: present only once the endpoint is deprecated, as the Unix time the deprecation took effect (`@1798761600` is 2027-01-01). Not sent by any endpoint today.
+         * @example @1798761600
+         */
+        Deprecation: string;
+        /**
+         * @description RFC 8594: present only once a removal date is set, as the HTTP-date after which the endpoint stops answering; at least 90 days after `Deprecation` first appeared. Not sent by any endpoint today.
+         * @example Thu, 01 Apr 2027 00:00:00 GMT
+         */
+        Sunset: string;
+    };
     pathItems: never;
 }
 export type $defs = Record<string, never>;
@@ -2683,6 +3068,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 5 `/v1/auth/*` requests per minute from this IP. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2746,6 +3134,9 @@ export interface operations {
             /** @description `rate_limited`: a code was sent to this account in the last 60 seconds. `rate_limit_exceeded`: more than 5 `/v1/auth/*` requests per minute from this IP. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2847,6 +3238,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 5 `/v1/auth/*` requests per minute from this IP. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2945,6 +3339,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3142,6 +3539,18 @@ export interface operations {
             /** @description `rate_limit_exceeded`: keyed uploads share the per-key limit (60 per minute, 300 per minute per project); keyless uploads are limited to 20 per hour per IP plus a short burst guard. Honour `Retry-After`. `account_budget_exceeded`: keyless uploads are temporarily paused. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `temporarily_unavailable`: storage did not accept the file after several retries; nothing was saved. Safe to retry after `Retry-After` (10 seconds). */
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -3196,6 +3605,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3266,6 +3678,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3327,6 +3742,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3389,6 +3807,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3417,37 +3838,31 @@ export interface operations {
                      *       "reviewed": true
                      *     }
                      */
-                    metadata: {
+                    metadata?: {
                         [key: string]: unknown;
                     } | null;
-                };
+                    /**
+                     * @description Move the file to public or private. Same value as now: no change. Applied before `metadata`, so a refused change leaves the metadata untouched too.
+                     * @example private
+                     * @enum {string}
+                     */
+                    visibility?: "public" | "private";
+                } | unknown | unknown;
             };
         };
         responses: {
-            /** @description Updated metadata */
+            /** @description The updated image */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        data?: {
-                            /** @example img_abc123 */
-                            id?: string;
-                            /**
-                             * @example {
-                             *       "env": "prod",
-                             *       "reviewed": true
-                             *     }
-                             */
-                            metadata?: {
-                                [key: string]: unknown;
-                            } | null;
-                        };
+                        data?: components["schemas"]["Image"];
                     };
                 };
             };
-            /** @description `validation_error`: the body is not JSON, has no `metadata` field, or the metadata is not an object, has more than 50 keys, exceeds 4 KB or contains unsafe characters. */
+            /** @description `validation_error`: the body is not JSON, has neither `metadata` nor `visibility`, `visibility` is not `public` or `private`, or the metadata is not an object, has more than 50 keys, exceeds 4 KB or contains unsafe characters. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3465,7 +3880,16 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `publishable_key_forbidden`: publishable keys (`pv_pub_`) can only upload images; use a secret key. `account_suspended`: the account is suspended. */
+            /** @description `private_limit_reached`: making the file private would exceed the Free plan's 100 private assets. */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `publishable_key_forbidden`: publishable keys (`pv_pub_`) can only upload images; use a secret key. `account_suspended`: the account is suspended. `visibility_change_blocked`: the file was taken down, so its visibility cannot change. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3476,6 +3900,15 @@ export interface operations {
             };
             /** @description `image_not_found`: no image or PDF with this id in the project. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `visibility_change_collection`: the file belongs to a collection, whose files share one visibility. `visibility_change_conflict`: the file changed or was deleted during the change; nothing was moved, retry. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3494,6 +3927,18 @@ export interface operations {
             };
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `temporarily_unavailable`: storage did not accept the moved file after several retries; nothing changed. Safe to retry. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3628,6 +4073,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: 60 generations per hour per account, the day's overall generation capacity, or the per-key request limit. Honour `Retry-After`; credits are not spent. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3819,6 +4267,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: the editing rate or daily cost limit, or the per-key request limit. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3965,7 +4416,7 @@ export interface operations {
                                 branded_url?: string;
                                 /** @example true */
                                 ok: boolean;
-                                /** @description Present when not `ok`: `missing_data`, `invalid_data` (bad base64), `file_too_large`, `invalid_file`, `invalid_metadata`, `private_limit_reached`, `upload_limit_reached`, `storage_limit_reached`, `upload_failed`, or a URL-import code (`invalid_url`, `unsupported_scheme`, `blocked_host`, `url_fetch_failed`, `url_too_large`). */
+                                /** @description Present when not `ok`: `missing_data`, `invalid_data` (bad base64), `file_too_large`, `invalid_file`, `invalid_metadata`, `private_limit_reached`, `upload_limit_reached`, `storage_limit_reached`, `upload_failed`, `temporarily_unavailable` (storage did not accept this item, or the batch's 30-second storage budget ran out; nothing was saved for it, so resend it), or a URL-import code (`invalid_url`, `unsupported_scheme`, `blocked_host`, `url_fetch_failed`, `url_too_large`). */
                                 error?: string;
                             }[];
                         };
@@ -4020,6 +4471,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -4227,6 +4681,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -4259,6 +4716,11 @@ export interface operations {
                             id: string;
                             /** @example Production */
                             name: string;
+                            /**
+                             * @description When true, the CDN only honors named presets (`?size=<builtin|custom>`) and ignores arbitrary transform params.
+                             * @example false
+                             */
+                            strict_transforms: boolean;
                             /** Format: date-time */
                             created_at: string;
                             /**
@@ -4325,6 +4787,8 @@ export interface operations {
                                 id: string;
                                 /** @example Production */
                                 name: string;
+                                /** @example false */
+                                strict_transforms: boolean;
                                 /** Format: date-time */
                                 created_at: string;
                             };
@@ -4448,19 +4912,37 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @example Production */
-                    name: string;
+                    name?: string;
+                    /**
+                     * @description When true, only built-in and custom `?size=<name>` presets are transformed on the CDN.
+                     * @example true
+                     */
+                    strict_transforms?: boolean;
                 };
             };
         };
         responses: {
-            /** @description Renamed project */
+            /** @description Updated project */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        data: {
+                            /** @example proj_abc123 */
+                            id: string;
+                            /** @example Production */
+                            name: string;
+                            /** @example true */
+                            strict_transforms: boolean;
+                            /** Format: date-time */
+                            created_at: string;
+                        };
+                    };
+                };
             };
-            /** @description `invalid_json` or `validation_error`: name is missing, empty or longer than 100 characters. */
+            /** @description `invalid_json` or `validation_error`: provide a valid `name` and/or boolean `strict_transforms`. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4490,6 +4972,248 @@ export interface operations {
             /** @description `project_not_found`: no project with this id belongs to the account. */
             404: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_presets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project transform presets and limits */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["TransformPreset"][];
+                        meta: {
+                            /** @example 25 */
+                            limit: number;
+                            /** @example 2 */
+                            total: number;
+                            /** @example false */
+                            strict_transforms: boolean;
+                            /**
+                             * @example [
+                             *       "s",
+                             *       "m",
+                             *       "l",
+                             *       "social",
+                             *       "square",
+                             *       "portrait"
+                             *     ]
+                             */
+                            builtin_presets: string[];
+                        };
+                    };
+                };
+            };
+            /** @description `unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preset_management_forbidden`: publishable keys cannot manage transform presets. `account_suspended`: the account is suspended. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    upsert_preset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Custom preset name (2–40 lowercase letters, digits, `-` or `_`; cannot shadow built-in presets `s`, `m`, `l`, `social`, `square`, `portrait`).
+                 * @example avatar
+                 */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    params: components["schemas"]["TransformParams"];
+                };
+            };
+        };
+        responses: {
+            /** @description Updated transform preset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["TransformPreset"];
+                        meta: {
+                            limit: number;
+                        };
+                    };
+                };
+            };
+            /** @description Created transform preset */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["TransformPreset"];
+                        meta: {
+                            limit: number;
+                        };
+                    };
+                };
+            };
+            /** @description `invalid_json` or `validation_error`: invalid preset name or invalid/empty `params`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preset_management_forbidden`: publishable keys cannot manage transform presets. `account_suspended`: the account is suspended. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preset_limit_reached`: the project already has the maximum number of custom presets for its plan. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    delete_preset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Custom preset name (2–40 lowercase letters, digits, `-` or `_`; cannot shadow built-in presets `s`, `m`, `l`, `social`, `square`, `portrait`).
+                 * @example avatar
+                 */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted preset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            /** @example true */
+                            deleted: boolean;
+                            /** @example avatar */
+                            name: string;
+                        };
+                    };
+                };
+            };
+            /** @description `unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preset_management_forbidden`: publishable keys cannot manage transform presets. `account_suspended`: the account is suspended. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preset_not_found`: no custom preset with this name exists in the project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -4786,6 +5510,422 @@ export interface operations {
             };
         };
     };
+    list_share_links: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Only links to this image or video.
+                 * @example img_abc123def456
+                 */
+                asset_id?: string;
+                /** @description Maximum number of links to return. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Share links, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ShareLink"][];
+                    };
+                };
+            };
+            /** @description `validation_error`: `limit` is not an integer from 1 to 100. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `share_link_management_forbidden`: publishable keys cannot manage share links. `account_suspended`: the account is suspended. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    create_share_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description A private image (`img_`) or video (`vid_`) in the project.
+                     * @example img_abc123def456
+                     */
+                    asset_id: string;
+                    /**
+                     * @description 8 to 128 characters, used as sent (not trimmed).
+                     * @example correct-horse-battery
+                     */
+                    password: string;
+                    /**
+                     * @description Link lifetime in seconds: 1 hour to 90 days, default 7 days.
+                     * @default 604800
+                     * @example 604800
+                     */
+                    expires_in?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Share link created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ShareLink"];
+                    };
+                };
+            };
+            /** @description `invalid_json` or `validation_error`: `asset_id` missing, `password` not 8 to 128 characters, or `expires_in` outside 3600 to 7776000. `share_asset_unsupported`: the asset is audio or a PDF. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `share_links_require_paid_plan`: share links are available on Starter and Pro. */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `share_link_management_forbidden`: publishable keys cannot manage share links. `account_suspended`: the account is suspended. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `image_not_found` or `video_not_found`: no such asset in the project. `account_not_found`: the account no longer exists. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `share_asset_not_private`: the asset is public; share links protect private media only. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_share_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Share-link id (`shr_` prefix).
+                 * @example shr_abc123def456
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The share link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ShareLink"];
+                    };
+                };
+            };
+            /** @description `unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `share_link_management_forbidden`: publishable keys cannot manage share links. `account_suspended`: the account is suspended. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `share_link_not_found`: no share link with this id belongs to the project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    revoke_share_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Share-link id (`shr_` prefix).
+                 * @example shr_abc123def456
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The revoked share link (`status: revoked`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ShareLink"];
+                    };
+                };
+            };
+            /** @description `unauthorized`: no Bearer token, or the dashboard session is invalid or expired. `invalid_api_key`: the API key is unknown or revoked. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `share_link_management_forbidden`: publishable keys cannot manage share links. `account_suspended`: the account is suspended. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `share_link_not_found`: no share link with this id belongs to the project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    unlock_share_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Share-link id (`shr_` prefix).
+                 * @example shr_abc123def456
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example correct-horse-battery */
+                    password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Unlocked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            /**
+                             * @example image
+                             * @enum {string}
+                             */
+                            kind: "image" | "video";
+                            /** @example image/png */
+                            mime_type: string;
+                            /**
+                             * Format: uri
+                             * @description Signed img.pixelvault.dev URL.
+                             * @example https://img.pixelvault.dev/proj_abc123/cp/i/img_abc123def456.png?token=abc&expires=1795449600
+                             */
+                            url: string;
+                            /**
+                             * Format: uri
+                             * @description Signed poster frame (videos with a poster only).
+                             */
+                            poster_url?: string;
+                            /**
+                             * @description Unix seconds when `url` (and `poster_url`) stop working.
+                             * @example 1795449600
+                             */
+                            expires: number;
+                            /**
+                             * Format: date-time
+                             * @description When the share link itself expires.
+                             * @example 2026-11-29T12:00:00.000Z
+                             */
+                            link_expires_at: string;
+                        };
+                    };
+                };
+            };
+            /** @description `invalid_json` or `validation_error`: no `password` in the body. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_share_password`: wrong password. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `share_link_not_found`: the link doesn't exist, has expired or was turned off. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limit_exceeded`: more than 10 attempts per minute from this IP or 30 per hour on this link. Honour `Retry-After`. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     list_keys: {
         parameters: {
             query?: never;
@@ -4867,6 +6007,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -4981,6 +6124,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 20 key creations and revocations per hour for the project, or the per-key request limit. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5054,6 +6200,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 20 key creations and revocations per hour for the project, or the per-key request limit. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5141,6 +6290,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5272,6 +6424,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5336,6 +6491,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5444,6 +6602,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5513,6 +6674,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5577,6 +6741,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5604,6 +6771,8 @@ export interface operations {
                      * @example 2592000
                      */
                     expires_in?: number;
+                    /** @description Optional on-the-fly transforms bound into the signature (raster images only; refused for PDFs and SVGs). Private transformed responses are served with `Cache-Control: private, max-age=300` and fail closed (403) if the transform cannot be produced. */
+                    transforms?: components["schemas"]["TransformParams"];
                 };
             };
         };
@@ -5618,13 +6787,13 @@ export interface operations {
                         data?: {
                             /**
                              * Format: uri
-                             * @example https://img.pixelvault.dev/proj_xyz789/cp/i/img_abc123.png?token=3f9a…&expires=1795449600
+                             * @example https://img.pixelvault.dev/proj_xyz789/cp/i/img_abc123.png?w=400&fmt=webp&token=3f9a…&expires=1795449600
                              */
                             url?: string;
                             /**
                              * Format: uri
                              * @description The same signed asset served from the project's active custom domain. Omitted when no ready custom domain exists.
-                             * @example https://media.example.com/cp/i/img_abc123.png?token=3f9a…&expires=1795449600
+                             * @example https://media.example.com/cp/i/img_abc123.png?w=400&fmt=webp&token=3f9a…&expires=1795449600
                              */
                             branded_url?: string;
                             /**
@@ -5636,7 +6805,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description `invalid_expires_in`: `expires_in` is not an integer between 60 and 2592000. */
+            /** @description `invalid_expires_in`, `validation_error`, `document_transforms_unsupported` or `svg_transforms_unsupported`. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5675,6 +6844,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5771,6 +6943,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 10 billing requests per hour for the account. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5851,6 +7026,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 10 billing requests per hour for the account. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5934,6 +7112,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6050,6 +7231,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6117,6 +7301,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6221,6 +7408,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 10 export starts per hour from this IP. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6340,6 +7530,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 120 requests per minute from this IP. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6429,6 +7622,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 120 requests per minute from this IP. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6589,13 +7785,16 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 20 claims per hour from this IP. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `audio_policy_pending`: audio hosting is not configured on this deployment. */
+            /** @description `audio_policy_pending`: audio hosting is not configured on this deployment. `temporarily_unavailable`: storage did not accept the file after several retries; nothing was saved. Safe to retry after `Retry-After` (10 seconds). */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6691,6 +7890,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6902,6 +8104,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6972,6 +8177,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7034,6 +8242,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7144,6 +8355,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7243,6 +8457,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7333,6 +8550,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7426,6 +8646,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7642,6 +8865,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7703,6 +8929,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7765,6 +8994,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7874,6 +9106,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7973,6 +9208,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8081,6 +9319,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8160,6 +9401,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8230,6 +9474,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8320,6 +9567,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8481,6 +9731,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8596,6 +9849,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8691,6 +9947,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8757,6 +10016,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 60 requests per minute for this key (or dashboard session) or 300 per minute for the project. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8792,47 +10054,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        data?: {
-                            /** @example img_abc123 */
-                            id?: string;
-                            /**
-                             * Format: uri
-                             * @description CDN URL; a short-lived signed URL for private images.
-                             * @example https://img.pixelvault.dev/proj_xyz789/img_abc123.png
-                             */
-                            url?: string;
-                            /**
-                             * Format: uri
-                             * @description Same asset on the project's active custom domain; omitted when none is ready.
-                             * @example https://media.example.com/img_abc123.png
-                             */
-                            branded_url?: string;
-                            /**
-                             * @example public
-                             * @enum {string}
-                             */
-                            visibility?: "public" | "private";
-                            /** @example screenshot.png */
-                            filename?: string;
-                            /** @example image/png */
-                            mime_type?: string;
-                            /** @example 51234 */
-                            size_bytes?: number;
-                            /** @example 1280 */
-                            width?: number | null;
-                            /** @example 720 */
-                            height?: number | null;
-                            /** @example proj_xyz789 */
-                            project_id?: string;
-                            /** @example null */
-                            folder?: string | null;
-                            /**
-                             * Format: date-time
-                             * @example 2026-11-16T12:00:00.000Z
-                             */
-                            created_at?: string;
-                            description?: components["schemas"]["DashboardDescription"];
-                        }[];
+                        data?: components["schemas"]["DashboardUpload"][];
                         meta?: {
                             /**
                              * @description Images matching the search.
@@ -8870,6 +10092,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 1,200 list requests per hour from this IP. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8899,6 +10124,13 @@ export interface operations {
                      * @enum {string}
                      */
                     describe?: "true" | "false";
+                    /**
+                     * @description `private` stores the file behind signed URLs. Any other value is rejected.
+                     * @default public
+                     * @example private
+                     * @enum {string}
+                     */
+                    visibility?: "public" | "private";
                 };
             };
         };
@@ -8920,6 +10152,7 @@ export interface operations {
                             kind?: "image" | "document";
                             /**
                              * Format: uri
+                             * @description CDN URL; a signed URL valid for 1 hour when private.
                              * @example https://img.pixelvault.dev/proj_xyz789/img_abc123.png
                              */
                             url?: string;
@@ -8929,6 +10162,16 @@ export interface operations {
                              * @example https://media.example.com/img_abc123.png
                              */
                             branded_url?: string;
+                            /**
+                             * @example public
+                             * @enum {string}
+                             */
+                            visibility?: "public" | "private";
+                            /**
+                             * @description Present when private: Unix seconds when the signed `url` stops working.
+                             * @example 1795000000
+                             */
+                            signed_expires?: number;
                             /** @example image/png */
                             mime_type?: string;
                             /** @example 51234 */
@@ -8947,7 +10190,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description `missing_file`: no `file` field. `invalid_file`: the bytes are not a supported image or PDF. */
+            /** @description `missing_file`: no `file` field. `invalid_file`: the bytes are not a supported image or PDF. `validation_error`: `visibility` is not `public` or `private`. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8965,7 +10208,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `upload_limit_reached`, `storage_limit_reached`: a plan quota is full. Plan ceilings, not rate limits. */
+            /** @description `upload_limit_reached`, `storage_limit_reached`: a plan quota is full. `private_limit_reached`: a private upload would exceed the Free plan's 100 private assets. Plan ceilings, not rate limits. */
             402: {
                 headers: {
                     [name: string]: unknown;
@@ -9003,6 +10246,18 @@ export interface operations {
             };
             /** @description `rate_limit_exceeded`: more than 200 uploads per hour for the account (or 300 requests per hour from one IP). Honour `Retry-After`. */
             429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `temporarily_unavailable`: storage did not accept the file after several retries; nothing was saved. Safe to retry after `Retry-After` (10 seconds). */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9049,6 +10304,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 1,200 list requests per hour from this IP. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9119,6 +10377,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 200 dashboard writes per hour for the account (or 300 from one IP). */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9171,6 +10432,119 @@ export interface operations {
             };
             /** @description `rate_limit_exceeded`: more than 300 dashboard writes per hour from this IP. */
             429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    dashboard_update_upload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Image id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @example private
+                     * @enum {string}
+                     */
+                    visibility: "public" | "private";
+                };
+            };
+        };
+        responses: {
+            /** @description The image after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["DashboardUpload"];
+                    };
+                };
+            };
+            /** @description `validation_error`: the body is not JSON or `visibility` is not `public` or `private`. `visibility_change_unsupported`: videos and audio keep the visibility they were uploaded with. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized`: no dashboard session, or it is invalid or expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `private_limit_reached`: making the file private would exceed the Free plan's 100 private assets. */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `visibility_change_blocked`: the file was taken down, so its visibility cannot change. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `image_not_found`: no such image in this account. `project_not_found`: the `X-PixelVault-Project-Id` project is not the account's. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `visibility_change_collection`: the file belongs to a collection, whose files share one visibility. `visibility_change_conflict`: the file changed or was deleted during the change; nothing was moved, retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limit_exceeded`: more than 300 dashboard writes per hour from this IP. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `temporarily_unavailable`: storage did not accept the moved file after several retries; nothing changed. Safe to retry. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9264,6 +10638,9 @@ export interface operations {
             /** @description `free_limit_reached`: 3 free images per IP per day are used. `free_capacity_reached`: the day's global free capacity is used. `rate_limit_exceeded`: too many playground requests from this IP. `account_budget_exceeded`: anonymous tools are temporarily paused. Honour `Retry-After`. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9379,6 +10756,18 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 10 playground uploads per hour from this IP. `account_budget_exceeded`: anonymous uploads are temporarily paused. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `temporarily_unavailable`: storage did not accept the file after several retries; nothing was saved. Safe to retry after `Retry-After` (10 seconds). */
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -9485,6 +10874,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 3 large-media uploads per hour from this IP. `account_budget_exceeded`: anonymous uploads are temporarily paused. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9612,6 +11004,9 @@ export interface operations {
             /** @description `rate_limit_exceeded`: more than 3 large-media uploads per hour from this IP. `account_budget_exceeded`: anonymous uploads are temporarily paused. */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9649,8 +11044,11 @@ export interface operations {
     serve_image: {
         parameters: {
             query?: {
-                /** @description Named preset (wins over w/h). s=256w, m=640w, l=1280w, social=1200×630 OG card. */
-                size?: "s" | "m" | "l" | "social";
+                /**
+                 * @description Named preset (wins over w/h). Built-ins: s=256w, m=640w, l=1280w, social=1200×630, square=1080×1080, portrait=1080×1350; or any custom preset created via `PUT /v1/presets/{name}`.
+                 * @example social
+                 */
+                size?: string;
                 /**
                  * @description Target width in px, snapped up to a discrete set (16–4000).
                  * @example 1200
@@ -9667,6 +11065,17 @@ export interface operations {
                 fmt?: "auto" | "webp" | "avif" | "jpg" | "png";
                 /** @description Output quality (discrete steps). */
                 q?: "auto" | "60" | "75" | "85";
+                /**
+                 * @description Device pixel ratio multiplier (snapped to 1/1.5/2; 1 = no-op). Honored alongside `w`/`h` or a preset.
+                 * @example 2
+                 */
+                dpr?: 1 | 1.5 | 2;
+                /** @description Auto-trim uniform outer borders/whitespace (`border` or `auto`). Project images only. */
+                trim?: "border" | "auto";
+                /** @description Set `false` (or `0`) to flatten an animated GIF/WebP to its static first frame. Project images only. */
+                anim?: "false" | "true";
+                /** @description Control EXIF, copyright, and C2PA metadata preservation (`none`, `copyright`, or `keep`). Project images only. */
+                metadata?: "none" | "copyright" | "keep";
                 /** @description AI background removal → transparent cut-out. Forces PNG unless a solid `background` or `fmt=webp`/`avif` is set. Project images only. */
                 segment?: "foreground";
                 /**
@@ -9696,10 +11105,55 @@ export interface operations {
                 /** @description Saturation multiplier, snapped to 0/0.5/1.5/2. 0 = grayscale; 1 = no change. */
                 saturation?: number;
                 /**
-                 * @description Watermark: the CDN path of another RASTER image (png/jpg/webp/avif) in the SAME project: its image_id.ext (e.g. img_logo.png), prefixed with its folder if it has one — not the original upload filename. Tiled edge-to-edge at its native size over the base. Bake opacity into the source PNG. Must be your own uploaded raster image — not an external URL and not SVG. A missing or unknown path is ignored (the base is served).
+                 * @description Tiled watermark: the CDN path of another PUBLIC RASTER image (png/jpg/webp/avif) in the SAME project: its image_id.ext (e.g. img_logo.png), prefixed with its folder if it has one — not the original upload filename. Tiled edge-to-edge at its native size over the base. Missing or unknown paths are ignored.
                  * @example img_logo.png
                  */
                 tile?: string;
+                /**
+                 * @description Positioned single watermark: the CDN path of another PUBLIC RASTER image (png/jpg/webp/avif) in the SAME project (e.g. img_logo.png). Placed once according to `watermark_pos` (default `bottom-right`). Missing or unknown paths are ignored.
+                 * @example img_logo.png
+                 */
+                watermark?: string;
+                /**
+                 * @description Anchor position for `watermark` (20px inset from edge, or centered).
+                 * @example bottom-right
+                 */
+                watermark_pos?: "bottom-right" | "bottom-left" | "top-right" | "top-left" | "center";
+                /**
+                 * @description Opacity for `watermark` (snapped to 0.25/0.5/0.75/1).
+                 * @example 0.75
+                 */
+                watermark_opacity?: number;
+                /**
+                 * @description Target width in px for `watermark` (snapped up to 32/64/96/128/200/320/512).
+                 * @example 128
+                 */
+                watermark_width?: number;
+                /**
+                 * @description Text overlay (1–120 printable characters). Project images only.
+                 * @example SAMPLE
+                 */
+                text?: string;
+                /**
+                 * @description Text overlay color: hex (`%23ffffff`), rgb()/rgba(), or CSS color name (default white).
+                 * @example #ffffff
+                 */
+                text_color?: string;
+                /**
+                 * @description Text overlay font size in px (snapped to 16/24/32/48/64/96/128; default 32).
+                 * @example 32
+                 */
+                text_size?: number;
+                /**
+                 * @description Anchor position for `text` (20px inset from edge, or centered; default `bottom-right`).
+                 * @example bottom-right
+                 */
+                text_pos?: "bottom-right" | "bottom-left" | "top-right" | "top-left" | "center";
+                /**
+                 * @description Opacity for `text` (snapped to 0.25/0.5/0.75/1).
+                 * @example 0.75
+                 */
+                text_opacity?: number;
                 /** @description HMAC signature for a signed (private) URL, from `sign_image_url`, `sign_video_url` or `sign_audio_url`. When transform params are present they are bound into the signature. */
                 token?: string;
                 /**
@@ -9781,6 +11235,9 @@ export interface operations {
             /** @description Bandwidth limit exceeded on the free tier (a placeholder image is returned). */
             429: {
                 headers: {
+                    "Retry-After": components["headers"]["Retry-After"];
+                    RateLimit: components["headers"]["RateLimit"];
+                    "RateLimit-Policy": components["headers"]["RateLimit-Policy"];
                     [name: string]: unknown;
                 };
                 content?: never;

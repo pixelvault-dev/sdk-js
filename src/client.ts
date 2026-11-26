@@ -4,6 +4,8 @@ import { VideosResource } from "./videos.js";
 import { AudioResource } from "./audio.js";
 import { ExportsResource } from "./exports.js";
 import { CustomDomainsResource } from "./custom-domains.js";
+import { PresetsResource, type SignUrlTransforms } from "./presets.js";
+import { ProjectsResource } from "./projects.js";
 import type { components, operations } from "./generated/schema.js";
 
 export type Image = components["schemas"]["Image"];
@@ -168,6 +170,8 @@ export class PixelVault {
   readonly usage: UsageResource;
   readonly keys: KeysResource;
   readonly customDomains: CustomDomainsResource;
+  readonly presets: PresetsResource;
+  readonly projects: ProjectsResource;
 
   constructor(options: ClientOptions = {}) {
     this.cfg = {
@@ -184,6 +188,8 @@ export class PixelVault {
     this.usage = new UsageResource(this.cfg);
     this.keys = new KeysResource(this.cfg);
     this.customDomains = new CustomDomainsResource(this.cfg);
+    this.presets = new PresetsResource(this.cfg);
+    this.projects = new ProjectsResource(this.cfg);
   }
 
   /**
@@ -427,12 +433,18 @@ class ImagesResource {
     });
   }
 
-  /** Signed URL for a private image. `expiresIn` is 60–2592000 seconds (default 3600). */
-  async signUrl(id: string, opts: { expiresIn?: number; signal?: AbortSignal } = {}): Promise<SignedUrl> {
+  /** Signed URL for a private image. `expiresIn` is 60–2592000 seconds (default 3600); optional `transforms` signs raster transforms into the URL. */
+  async signUrl(
+    id: string,
+    opts: { expiresIn?: number; transforms?: SignUrlTransforms; signal?: AbortSignal } = {},
+  ): Promise<SignedUrl> {
+    const body: Record<string, unknown> = {};
+    if (opts.expiresIn !== undefined) body.expires_in = opts.expiresIn;
+    if (opts.transforms !== undefined) body.transforms = opts.transforms;
     const res = await request<{ data: SignedUrl }>(this.cfg, {
       method: "POST",
       path: `/v1/images/${encodeURIComponent(id)}/sign-url`,
-      json: opts.expiresIn !== undefined ? { expires_in: opts.expiresIn } : {},
+      json: body,
       signal: opts.signal,
     });
     return res.data;
